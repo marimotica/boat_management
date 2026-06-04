@@ -1,0 +1,279 @@
+update_vessel:
+  name: Update vessel
+  description: Update display/identity attributes of the vessel.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: Target config entry (required only with multiple vessels).
+      selector:
+        text:
+    changes:
+      name: Changes
+      description: Mapping of vessel fields to update.
+      required: true
+      selector:
+        object:
+
+set_vessel_timezone:
+  name: Set vessel timezone
+  description: Change the active vessel timezone. Historical records are not rewritten.
+  fields:
+    entry_id:
+      selector:
+        text:
+    timezone:
+      name: Timezone
+      description: IANA timezone name (e.g. Europe/Paris).
+      required: true
+      selector:
+        text:
+    source:
+      name: Source
+      description: Where the timezone value came from.
+      selector:
+        select:
+          options: [manual, home_port, gps_position, imported]
+
+create_system:
+  name: Create system
+  fields:
+    entry_id: { selector: { text: } }
+    name: { required: true, selector: { text: } }
+    category: { selector: { text: } }
+    description: { selector: { text: } }
+    parent_system_id: { selector: { text: } }
+
+update_system:
+  name: Update system
+  fields:
+    entry_id: { selector: { text: } }
+    system_id: { required: true, selector: { text: } }
+    changes: { required: true, selector: { object: } }
+
+archive_system:
+  name: Archive system
+  fields:
+    entry_id: { selector: { text: } }
+    system_id: { required: true, selector: { text: } }
+
+create_equipment:
+  name: Create equipment
+  fields:
+    entry_id: { selector: { text: } }
+    name: { required: true, selector: { text: } }
+    system_id: { selector: { text: } }
+    inventory_refs: { selector: { object: } }
+    category: { selector: { text: } }
+    manufacturer: { selector: { text: } }
+    model: { selector: { text: } }
+    serial_number: { selector: { text: } }
+    location: { selector: { text: } }
+    maintenance_interval_days: { selector: { number: { min: 1, mode: box } } }
+
+update_equipment:
+  name: Update equipment
+  fields:
+    entry_id: { selector: { text: } }
+    equipment_id: { required: true, selector: { text: } }
+    changes: { required: true, selector: { object: } }
+
+retire_equipment:
+  name: Retire equipment
+  fields:
+    entry_id: { selector: { text: } }
+    equipment_id: { required: true, selector: { text: } }
+    retired_date: { selector: { text: } }
+
+create_inventory_item:
+  name: Create inventory item
+  fields:
+    entry_id: { selector: { text: } }
+    name: { required: true, selector: { text: } }
+    quantity: { selector: { text: } }
+    unit: { selector: { text: } }
+    equipment_refs: { selector: { object: } }
+    minimum_stock: { selector: { text: } }
+    reorder_level: { selector: { text: } }
+    category: { selector: { text: } }
+    part_number: { selector: { text: } }
+    storage_location: { selector: { text: } }
+    expiry_date: { selector: { text: } }
+
+update_inventory_item:
+  name: Update inventory item
+  fields:
+    entry_id: { selector: { text: } }
+    inventory_id: { required: true, selector: { text: } }
+    changes: { required: true, selector: { object: } }
+
+adjust_inventory_quantity:
+  name: Adjust inventory quantity
+  fields:
+    entry_id: { selector: { text: } }
+    inventory_id: { required: true, selector: { text: } }
+    delta: { required: true, selector: { text: } }
+    reason: { selector: { text: } }
+
+consume_inventory:
+  name: Consume inventory
+  fields:
+    entry_id: { selector: { text: } }
+    inventory_id: { required: true, selector: { text: } }
+    quantity: { required: true, selector: { text: } }
+    reason: { selector: { text: } }
+
+move_inventory:
+  name: Move inventory
+  fields:
+    entry_id: { selector: { text: } }
+    inventory_id: { required: true, selector: { text: } }
+    storage_location: { required: true, selector: { text: } }
+
+mark_inventory_expired:
+  name: Mark inventory expired
+  fields:
+    entry_id: { selector: { text: } }
+    inventory_id: { required: true, selector: { text: } }
+
+create_catalogue_task:
+  name: Create catalogue task
+  fields:
+    entry_id: { selector: { text: } }
+    title: { required: true, selector: { text: } }
+    description: { selector: { text: } }
+    system_refs: { selector: { object: } }
+    equipment_refs: { selector: { object: } }
+    inventory_refs: { selector: { object: } }
+    required_skills: { selector: { object: } }
+    estimated_duration_minutes: { selector: { number: { mode: box } } }
+    procedure: { selector: { text: } }
+    safety_notes: { selector: { text: } }
+    default_verifier: { selector: { text: } }
+    trigger_rules: { selector: { object: } }
+
+update_catalogue_task:
+  name: Update catalogue task
+  fields:
+    entry_id: { selector: { text: } }
+    catalogue_task_id: { required: true, selector: { text: } }
+    changes: { required: true, selector: { object: } }
+
+archive_catalogue_task:
+  name: Archive catalogue task
+  fields:
+    entry_id: { selector: { text: } }
+    catalogue_task_id: { required: true, selector: { text: } }
+
+load_seed_catalogue:
+  name: Load seed catalogue
+  description: >-
+    Populate the default systems and Boat Task Catalogue entries. Idempotent:
+    records already present (matched by name) are skipped. Use dry_run to
+    preview without writing.
+  fields:
+    entry_id: { selector: { text: } }
+    dry_run: { selector: { boolean: } }
+
+create_work_item:
+  name: Create work item
+  fields:
+    entry_id: { selector: { text: } }
+    catalogue_task_id: { required: true, selector: { text: } }
+    trigger_source: { selector: { text: } }
+    trigger_key: { selector: { text: } }
+    operational_context_id: { selector: { text: } }
+    title: { selector: { text: } }
+    assigned_to: { selector: { text: } }
+    due_date: { selector: { text: } }
+
+claim_work_item:
+  name: Claim work item
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    crew_id: { required: true, selector: { text: } }
+
+start_work_item:
+  name: Start work item
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+
+submit_for_review:
+  name: Submit work item for review
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    completion_notes: { selector: { text: } }
+    evidence_refs: { selector: { object: } }
+    inventory_used: { selector: { object: } }
+    meter_readings: { selector: { object: } }
+
+verify_work_item:
+  name: Verify work item
+  description: Verify reviewed work, creating an immutable maintenance log entry.
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    verified_by: { required: true, selector: { text: } }
+    notes: { selector: { text: } }
+    consume_inventory: { selector: { boolean: } }
+
+block_work_item:
+  name: Block work item
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    block_reason: { selector: { text: } }
+
+defer_work_item:
+  name: Defer work item
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    reason: { selector: { text: } }
+
+cancel_work_item:
+  name: Cancel work item
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    reason: { selector: { text: } }
+
+reopen_work_item:
+  name: Reopen work item
+  description: Create a corrective work item; never deletes maintenance history.
+  fields:
+    entry_id: { selector: { text: } }
+    work_item_id: { required: true, selector: { text: } }
+    reason: { selector: { text: } }
+
+apply_trigger_rules:
+  name: Apply trigger rules
+  description: Evaluate an operational event against catalogue triggers.
+  fields:
+    entry_id: { selector: { text: } }
+    source: { required: true, selector: { text: } }
+    key: { selector: { text: } }
+    context_id: { selector: { text: } }
+    value: { selector: { number: { mode: box } } }
+    dry_run: { selector: { boolean: } }
+
+import_data:
+  name: Import data
+  fields:
+    entry_id: { selector: { text: } }
+    payload: { required: true, selector: { object: } }
+    mode: { selector: { select: { options: [merge, replace] } } }
+    dry_run: { selector: { boolean: } }
+
+export_data:
+  name: Export data
+  fields:
+    entry_id: { selector: { text: } }
+    include_logbook: { selector: { boolean: } }
+
+export_logbook:
+  name: Export logbook
+  fields:
+    entry_id: { selector: { text: } }

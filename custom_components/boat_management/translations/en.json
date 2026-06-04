@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add vessel",
+        "description": "Set up a vessel to manage. Timezones use IANA names such as Europe/Paris.",
+        "data": {
+          "vessel_name": "Vessel name",
+          "vessel_id": "Stable vessel identifier (optional)",
+          "home_port": "Home port",
+          "default_timezone": "Default timezone",
+          "current_timezone": "Current timezone"
+        }
+      }
+    },
+    "error": {
+      "required": "This field is required.",
+      "invalid_timezone": "Enter a valid IANA timezone such as Europe/Paris."
+    },
+    "abort": {
+      "already_configured": "This vessel is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Vessel options",
+        "data": {
+          "default_timezone": "Default timezone",
+          "current_timezone": "Current timezone",
+          "low_stock_creates_work": "Low stock suggests work items",
+          "consume_inventory_on_verify": "Consume inventory on verification",
+          "trigger_autorun": "Automatically run trigger rules",
+          "diagnostics_verbose": "Verbose diagnostics"
+        }
+      }
+    },
+    "error": {
+      "invalid_timezone": "Enter a valid IANA timezone such as Europe/Paris."
+    }
+  },
+  "issues": {
+    "invalid_vessel_timezone": {
+      "title": "Invalid vessel timezone",
+      "description": "The vessel timezone '{timezone}' is not a valid IANA timezone. Update it in the integration options."
+    },
+    "missing_equipment_reference": {
+      "title": "Broken equipment reference",
+      "description": "{detail} (object {object_id}, missing reference {missing_ref})."
+    },
+    "missing_inventory_reference": {
+      "title": "Broken inventory reference",
+      "description": "{detail} (object {object_id}, missing reference {missing_ref})."
+    },
+    "missing_catalogue_task_reference": {
+      "title": "Missing catalogue task",
+      "description": "{detail} (object {object_id}, missing reference {missing_ref})."
+    },
+    "negative_inventory_quantity": {
+      "title": "Negative inventory quantity",
+      "description": "{detail} (object {object_id})."
+    },
+    "log_entry_missing_timezone": {
+      "title": "Log entry missing timezone",
+      "description": "{detail} (object {object_id})."
+    }
+  }
+}

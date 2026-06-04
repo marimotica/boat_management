@@ -395,8 +395,8 @@ Rules:
 - Store `timezone_at_event` for all audit events, work transitions, and log entries.
 - For human-facing due dates, store date intent separately from instant timestamps when needed.
 - Do not reinterpret historical local times after vessel timezone changes.
-- Do not assume Home Assistant's configured timezone equals vessel timezone.
-- Use Home Assistant timezone only as a fallback for display, never as vessel truth.
+- Default the vessel timezone to Home Assistant's configured timezone, since Home Assistant is expected to run onboard; resolve the active timezone as `vessel.current_timezone or hass.config.time_zone`.
+- Allow manual or GPS-derived overrides, which become vessel truth once set; still preserve the local timezone context on every persisted event so history stays correct after the timezone changes.
 
 Example event timestamp fields:
 

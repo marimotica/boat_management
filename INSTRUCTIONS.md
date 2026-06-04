@@ -168,7 +168,7 @@ Home Assistant modules should call domain functions; they should not duplicate r
 - Store canonical timestamps in UTC.
 - Preserve local timestamp and `timezone_at_event` for historical records.
 - Vessel timezone is editable.
-- Home Assistant timezone is not vessel timezone.
+- Vessel timezone defaults to Home Assistant's timezone (it runs onboard); a manual or GPS override becomes vessel truth once set. Resolve the active timezone as `vessel.current_timezone or hass.config.time_zone`.
 - Do not reinterpret historical records after timezone changes.
 - Validate timezone strings against IANA names.
 

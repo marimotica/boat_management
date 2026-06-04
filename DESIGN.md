@@ -538,7 +538,7 @@ Storage concerns:
 
 ## Timezone Design
 
-The vessel timezone must be independent of Home Assistant's timezone.
+The vessel timezone defaults to Home Assistant's configured timezone because Home Assistant is expected to run onboard. The integration may allow a manual or GPS-derived override, but all persisted logbook, audit, and work-item timestamps must store both UTC and the local timezone context used at creation time.
 
 Use cases:
 
@@ -551,12 +551,18 @@ Policy:
 
 - Store UTC for canonical ordering.
 - Store local timestamp and timezone for historical meaning.
-- Use vessel `current_timezone` for new operational events.
+- Resolve the active timezone as `vessel.current_timezone or hass.config.time_zone` for new operational events, so Home Assistant remains the operational timezone source unless overridden.
 - Do not rewrite historical local timestamps when timezone changes.
 
 Example:
 
 ```python
+# AuditEvent
+timestamp_utc = "2026-06-04T10:30:00Z"
+timestamp_local = "2026-06-04T12:30:00+02:00"
+timezone_at_event = "Europe/Paris"
+
+# MaintenanceLogEntry
 completed_at_utc = "2026-06-04T10:30:00Z"
 completed_at_local = "2026-06-04T12:30:00+02:00"
 timezone_at_completion = "Europe/Paris"

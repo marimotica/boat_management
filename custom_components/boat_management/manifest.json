@@ -1,0 +1,14 @@
+{
+  "domain": "boat_management",
+  "name": "Boat Management",
+  "version": "0.1.0",
+  "documentation": "https://github.com/anomalyco/boat_management",
+  "issue_tracker": "https://github.com/anomalyco/boat_management/issues",
+  "codeowners": ["@anomalyco"],
+  "config_flow": true,
+  "dependencies": [],
+  "after_dependencies": [],
+  "requirements": [],
+  "integration_type": "service",
+  "iot_class": "local_push"
+}
