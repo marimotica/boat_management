@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, PLATFORMS
 from .coordinator import BoatCoordinator
+from .panel import async_register_panel, async_unregister_panel
 from .repairs import async_evaluate_repairs
 from .services import async_register_services, async_unregister_services
 from .websocket_api import async_register_websocket_api
@@ -35,6 +36,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async_register_services(hass)
     async_register_websocket_api(hass)
 
+    # Register the custom management panel (idempotent, once per domain).
+    await async_register_panel(hass)
+
     # Surface any persisted invalid state as repair issues.
     async_evaluate_repairs(hass, coordinator)
 
@@ -50,6 +54,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         domain_data.pop(entry.entry_id, None)
         if not domain_data:
             async_unregister_services(hass)
+            async_unregister_panel(hass)
             hass.data.pop(DOMAIN, None)
     return unload_ok
 

@@ -570,6 +570,41 @@ Snapshot tests should protect:
 - Service schemas
 - State transition behavior
 
+### Frontend panel
+
+The Lit/TypeScript panel under `frontend/` (bundled into
+`custom_components/boat_management/frontend/`) is held to the same standard as
+the backend. Run it with `npm run test` (Vitest + happy-dom — a pure-Node DOM
+that needs no browser download, so the suite stays offline and deterministic
+like everything else). `npm run typecheck` and `npm run build` must also stay
+green; the committed `boat-management-panel.js` is a build artifact, never a
+source of truth, and must be rebuilt when `frontend/src/` changes.
+
+Keep these areas pure and directly unit-testable:
+
+```text
+api.ts                (websocket command mapping + payload pruning)
+types.ts              (isWsError + serialized record shapes)
+inventory-view.ts     (isLowStock and future presentation helpers)
+```
+
+Mandatory frontend tests:
+
+- Exact websocket payloads: blank and empty-array fields are pruned, while
+  `changes` dicts are forwarded verbatim so explicit nulls still clear fields.
+- The panel never invents ids: create flows omit the id and trust the
+  server-assigned id returned by the command.
+- Presentational views render their records, surface empty states, and emit
+  `bm-edit` with the tapped record.
+- Bottom-sheet forms seed from the record and emit the correct intent with the
+  correct draft (`bm-save`, `bm-archive`, `bm-retire`, `bm-adjust`,
+  `bm-mark-expired`).
+- Inventory quantity is settable only on create; existing stock moves only via a
+  signed `bm-adjust` delta (mirroring the audited backend rule), and the sheet
+  seed-guard preserves in-flight edits across a same-item refresh.
+- Panel mutation path (`_run`): write, then refresh, then close — and a surfaced
+  websocket error keeps the sheet open with an actionable message.
+
 ---
 
 ## CI and Quality Gates
@@ -581,6 +616,15 @@ ruff
 black
 pytest
 pytest-homeassistant-custom-component
+```
+
+When `frontend/` changes, the panel has its own minimum gates (run from
+`frontend/`):
+
+```text
+npm run typecheck
+npm run test
+npm run build
 ```
 
 Recommended:
@@ -598,6 +642,8 @@ Rules:
 
 - New domain logic requires tests.
 - New services require service schema tests.
+- New or changed panel code requires Vitest tests and a rebuilt, committed
+  bundle.
 - New stored fields require migration consideration.
 - New user-facing strings require translations.
 - No broad exception swallowing.
@@ -650,6 +696,7 @@ A v1 feature is done when:
 - It has diagnostics or repair coverage where appropriate.
 - It has unit tests for core logic.
 - It has HA harness tests for entity/service behavior where relevant.
+- If it touches the panel, it has Vitest tests and a rebuilt, committed bundle.
 - It preserves auditability.
 - It does not compromise immutable maintenance history.
 

@@ -192,3 +192,15 @@ PLATFORMS: Final = ["binary_sensor", "sensor", "todo"]
 
 # Import/export schema --------------------------------------------------------
 EXPORT_SCHEMA_VERSION: Final = 1
+
+# Custom panel (frontend) ----------------------------------------------------
+#: Sidebar URL slug for the management app.
+PANEL_URL_PATH: Final = "boat-management"
+#: Custom element name the bundle defines.
+PANEL_WEBCOMPONENT: Final = "boat-management-panel"
+PANEL_TITLE: Final = "Boat"
+PANEL_ICON: Final = "mdi:sail-boat"
+#: HTTP path the built JS module is served from (versioned to bust caches).
+PANEL_STATIC_URL: Final = f"/{DOMAIN}_frontend/boat-management-panel.js"
+#: Filename of the committed bundle under the integration's frontend/ dir.
+PANEL_BUNDLE_FILENAME: Final = "boat-management-panel.js"

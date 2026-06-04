@@ -1,0 +1,23 @@
+{
+  "name": "boat-management-panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Home Assistant custom panel for the Boat Management integration.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.8",
+    "esbuild": "^0.21.5",
+    "happy-dom": "^20.10.1",
+    "lit": "^3.1.4",
+    "typescript": "^5.4.5",
+    "vitest": "^4.1.8"
+  }
+}

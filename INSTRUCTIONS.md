@@ -54,6 +54,14 @@ custom_components/boat_management/
   translations/
 
 tests/components/boat_management/
+
+frontend/                      # Lit/TypeScript panel sources
+  src/                         # components, api.ts, types.ts
+  test/                        # Vitest + happy-dom tests
+  package.json
+  vitest.config.ts
+custom_components/boat_management/frontend/
+  boat-management-panel.js     # built artifact (committed; never hand-edit)
 ```
 
 Keep business logic out of HA platform files when possible.
@@ -77,6 +85,17 @@ Recommended checks:
 ruff check .
 black --check .
 pytest
+```
+
+When working on the panel (`frontend/`), use the Node toolchain (no browser is
+required — tests run in a pure-Node DOM):
+
+```bash
+cd frontend
+npm install
+npm run typecheck
+npm run test
+npm run build
 ```
 
 If the repository uses `pre-commit`:
@@ -316,6 +335,30 @@ Use snapshot tests for:
 - Service schema shape
 - Transition matrix
 
+### Frontend Panel Tests
+
+The panel under `frontend/` is tested with Vitest in a pure-Node DOM
+(happy-dom) — no browser is downloaded, so the suite runs offline and
+deterministically like the backend. Add or update tests in `frontend/test/`
+for:
+
+- Websocket command payloads: exact shape, blank/empty-array fields pruned,
+  and `changes` dicts forwarded verbatim so explicit nulls still clear fields
+- Stable-id discipline: create flows send no id and trust the server-assigned
+  id returned by the command
+- View rendering, empty states, and `bm-edit` emission with the tapped record
+- Bottom-sheet seeding from the record and intent events (`bm-save`,
+  `bm-archive`, `bm-retire`, `bm-adjust`, `bm-mark-expired`)
+- Inventory create-only quantity vs. a signed `bm-adjust` delta, and the
+  sheet seed-guard preserving in-flight edits across a same-item refresh
+- The panel mutation path (`_run`): write, then refresh, then close, with a
+  surfaced websocket error keeping the sheet open and actionable
+
+Keep `api.ts`, `types.ts`, and presentation helpers (for example `isLowStock`)
+pure and directly unit-testable. Rebuild the committed bundle
+(`npm run build`) whenever `frontend/src/` changes; `boat-management-panel.js`
+is a generated artifact, never a source of truth.
+
 ---
 
 ## Pull Request Checklist
@@ -336,6 +379,8 @@ Before opening or merging a PR:
 [ ] No immutable history is mutated
 [ ] No IDs are derived from display names
 [ ] Timezone behavior is correct for moving vessels
+[ ] Frontend changes pass npm run typecheck, npm run test, and npm run build
+[ ] Panel bundle (boat-management-panel.js) rebuilt and committed when frontend/src changed
 ```
 
 ---

@@ -52,22 +52,45 @@ def test_filter_query_and_limit_combined() -> None:
 from custom_components.boat_management import websocket_api as ws  # noqa: E402
 
 
+class _FakeUser:
+    def __init__(self, user_id: str = "test-user") -> None:
+        self.id = user_id
+
+
 class _FakeConnection:
-    def __init__(self) -> None:
+    def __init__(self, user: _FakeUser | None = None) -> None:
         self.results: dict[int, object] = {}
         self.errors: dict[int, tuple[str, str]] = {}
+        self.messages: list[dict] = []
+        self.subscriptions: dict[int, object] = {}
+        self.user = user if user is not None else _FakeUser()
 
-    def send_result(self, msg_id: int, result: object) -> None:
+    def send_result(self, msg_id: int, result: object = None) -> None:
         self.results[msg_id] = result
 
     def send_error(self, msg_id: int, code: str, message: str) -> None:
         self.errors[msg_id] = (code, message)
+
+    def send_message(self, message: dict) -> None:
+        self.messages.append(message)
 
 
 def _call(hass: HomeAssistant, handler, raw: dict) -> _FakeConnection:
     msg = handler._ws_schema(raw)
     conn = _FakeConnection()
     handler(hass, conn, msg)
+    return conn
+
+
+async def _call_write(hass: HomeAssistant, handler, raw: dict) -> _FakeConnection:
+    """Invoke an async write command's underlying coroutine with a fake conn.
+
+    ``async_response`` wraps the real handler; ``__wrapped__`` exposes the raw
+    coroutine so we exercise the true handler + schema without the transport.
+    """
+    msg = handler._ws_schema(raw)
+    conn = _FakeConnection()
+    await handler.__wrapped__(hass, conn, msg)
     return conn
 
 
@@ -199,3 +222,413 @@ async def test_ws_import_preview_invalid_payload_errors(
         {"id": 11, "type": "boat_management/import_preview", "payload": {}},
     )
     assert conn.errors[11][0] == "invalid_payload"
+
+
+# --- Bootstrap --------------------------------------------------------------
+async def test_ws_bootstrap_returns_full_snapshot(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    await _seed_systems(hass)
+    conn = _call(hass, ws.ws_bootstrap, {"id": 12, "type": "boat_management/bootstrap"})
+    payload = conn.results[12]
+    assert payload["vessel"]["id"]
+    assert payload["active_timezone"]
+    assert payload["schema_version"] == 1
+    assert payload["counts"]["systems"] == 3
+    assert len(payload["collections"]["systems"]) == 3
+    # Every managed collection must be present, even when empty.
+    assert "maintenance_log" in payload["collections"]
+
+
+async def test_ws_bootstrap_unknown_entry_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = _call(
+        hass,
+        ws.ws_bootstrap,
+        {"id": 13, "type": "boat_management/bootstrap", "entry_id": "nope"},
+    )
+    assert conn.errors[13][0] == "not_found"
+
+
+# --- Write commands ---------------------------------------------------------
+def _write(name: str):
+    return ws.WRITE_COMMANDS[f"boat_management/{name}"]
+
+
+async def test_ws_create_system_returns_object_with_id(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    conn = await _call_write(
+        hass,
+        _write("create_system"),
+        {"id": 14, "type": "boat_management/create_system", "name": "Rigging"},
+    )
+    result = conn.results[14]
+    # Server assigns the stable id; the panel never invents one.
+    assert result["id"]
+    assert result["name"] == "Rigging"
+    assert result["id"] in coordinator.data.systems
+
+
+async def test_ws_create_system_records_actor_from_connection(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_system"),
+        {"id": 15, "type": "boat_management/create_system", "name": "Safety"},
+    )
+    system_id = created.results[15]["id"]
+    # The authenticated websocket user is recorded for the audit trail.
+    actors = {
+        e.actor
+        for e in coordinator.data.audit_events.values()
+        if e.object_id == system_id
+    }
+    assert actors == {"test-user"}
+
+
+async def test_ws_create_system_validation_error_is_structured(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = await _call_write(
+        hass,
+        _write("create_system"),
+        {"id": 16, "type": "boat_management/create_system", "name": "  "},
+    )
+    assert 16 not in conn.results
+    assert conn.errors[16][0] == "invalid_request"
+
+
+async def test_ws_update_system_applies_changes(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_system"),
+        {"id": 17, "type": "boat_management/create_system", "name": "Old"},
+    )
+    system_id = created.results[17]["id"]
+    conn = await _call_write(
+        hass,
+        _write("update_system"),
+        {
+            "id": 18,
+            "type": "boat_management/update_system",
+            "system_id": system_id,
+            "changes": {"name": "New"},
+        },
+    )
+    assert conn.results[18]["name"] == "New"
+    assert coordinator.data.systems[system_id].name == "New"
+
+
+async def test_ws_archive_system_marks_inactive(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_system"),
+        {"id": 19, "type": "boat_management/create_system", "name": "Tender"},
+    )
+    system_id = created.results[19]["id"]
+    conn = await _call_write(
+        hass,
+        _write("archive_system"),
+        {
+            "id": 20,
+            "type": "boat_management/archive_system",
+            "system_id": system_id,
+        },
+    )
+    assert conn.results[20]["active"] is False
+    assert coordinator.data.systems[system_id].active is False
+
+
+async def test_ws_create_inventory_item_roundtrips(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    conn = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 21,
+            "type": "boat_management/create_inventory_item",
+            "name": "Impeller",
+            "quantity": 4,
+            "unit": "ea",
+        },
+    )
+    result = conn.results[21]
+    assert result["name"] == "Impeller"
+    assert result["id"] in coordinator.data.inventory
+
+
+# --- Equipment & inventory writes (Phase 2) ---------------------------------
+async def test_ws_create_equipment_with_documentation_refs(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    conn = await _call_write(
+        hass,
+        _write("create_equipment"),
+        {
+            "id": 30,
+            "type": "boat_management/create_equipment",
+            "name": "Port Engine",
+            "documentation_refs": ["https://manuals/engine.pdf", "doc-42"],
+            "maintenance_interval_days": 180,
+        },
+    )
+    result = conn.results[30]
+    assert result["id"] in coordinator.data.equipment
+    # Documentation references are opaque strings preserved verbatim.
+    assert result["documentation_refs"] == ["https://manuals/engine.pdf", "doc-42"]
+    assert result["maintenance_interval_days"] == 180
+
+
+async def test_ws_create_equipment_links_inventory(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    inv = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 31,
+            "type": "boat_management/create_inventory_item",
+            "name": "Oil filter",
+            "quantity": 6,
+        },
+    )
+    inv_id = inv.results[31]["id"]
+    conn = await _call_write(
+        hass,
+        _write("create_equipment"),
+        {
+            "id": 32,
+            "type": "boat_management/create_equipment",
+            "name": "Generator",
+            "inventory_refs": [inv_id],
+        },
+    )
+    assert conn.results[32]["inventory_refs"] == [inv_id]
+
+
+async def test_ws_create_equipment_bad_system_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = await _call_write(
+        hass,
+        _write("create_equipment"),
+        {
+            "id": 33,
+            "type": "boat_management/create_equipment",
+            "name": "Windlass",
+            "system_id": "sys-does-not-exist",
+        },
+    )
+    assert 33 not in conn.results
+    assert conn.errors[33][0] == "invalid_request"
+
+
+async def test_ws_update_equipment_applies_changes(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_equipment"),
+        {"id": 34, "type": "boat_management/create_equipment", "name": "Old Pump"},
+    )
+    eq_id = created.results[34]["id"]
+    conn = await _call_write(
+        hass,
+        _write("update_equipment"),
+        {
+            "id": 35,
+            "type": "boat_management/update_equipment",
+            "equipment_id": eq_id,
+            "changes": {"name": "New Pump", "documentation_refs": ["m1"]},
+        },
+    )
+    assert conn.results[35]["name"] == "New Pump"
+    assert coordinator.data.equipment[eq_id].documentation_refs == ["m1"]
+
+
+async def test_ws_retire_equipment_marks_inactive(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_equipment"),
+        {"id": 36, "type": "boat_management/create_equipment", "name": "Old Radar"},
+    )
+    eq_id = created.results[36]["id"]
+    conn = await _call_write(
+        hass,
+        _write("retire_equipment"),
+        {"id": 37, "type": "boat_management/retire_equipment", "equipment_id": eq_id},
+    )
+    assert conn.results[37]["active"] is False
+    assert coordinator.data.equipment[eq_id].active is False
+    # Retiring stamps a date so history stays resolvable.
+    assert coordinator.data.equipment[eq_id].retired_date
+
+
+async def test_ws_update_inventory_item_applies_changes(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 38,
+            "type": "boat_management/create_inventory_item",
+            "name": "Impeller",
+            "quantity": 3,
+        },
+    )
+    inv_id = created.results[38]["id"]
+    conn = await _call_write(
+        hass,
+        _write("update_inventory_item"),
+        {
+            "id": 39,
+            "type": "boat_management/update_inventory_item",
+            "inventory_id": inv_id,
+            "changes": {"storage_location": "Locker B", "minimum_stock": "2"},
+        },
+    )
+    assert conn.results[39]["storage_location"] == "Locker B"
+    assert coordinator.data.inventory[inv_id].storage_location == "Locker B"
+
+
+async def test_ws_adjust_inventory_quantity_changes_stock(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 40,
+            "type": "boat_management/create_inventory_item",
+            "name": "Coolant",
+            "quantity": 5,
+        },
+    )
+    inv_id = created.results[40]["id"]
+    conn = await _call_write(
+        hass,
+        _write("adjust_inventory_quantity"),
+        {
+            "id": 41,
+            "type": "boat_management/adjust_inventory_quantity",
+            "inventory_id": inv_id,
+            "delta": "-2",
+        },
+    )
+    assert conn.results[41]["quantity"] == "3"
+    assert str(coordinator.data.inventory[inv_id].quantity) == "3"
+
+
+async def test_ws_adjust_inventory_below_zero_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    created = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 42,
+            "type": "boat_management/create_inventory_item",
+            "name": "Zinc anode",
+            "quantity": 1,
+        },
+    )
+    inv_id = created.results[42]["id"]
+    conn = await _call_write(
+        hass,
+        _write("adjust_inventory_quantity"),
+        {
+            "id": 43,
+            "type": "boat_management/adjust_inventory_quantity",
+            "inventory_id": inv_id,
+            "delta": "-5",
+        },
+    )
+    assert 43 not in conn.results
+    assert conn.errors[43][0] == "invalid_request"
+
+
+async def test_ws_mark_inventory_expired_sets_flag(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    created = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 44,
+            "type": "boat_management/create_inventory_item",
+            "name": "Flares",
+            "quantity": 4,
+        },
+    )
+    inv_id = created.results[44]["id"]
+    conn = await _call_write(
+        hass,
+        _write("mark_inventory_expired"),
+        {
+            "id": 45,
+            "type": "boat_management/mark_inventory_expired",
+            "inventory_id": inv_id,
+        },
+    )
+    assert conn.results[45]["expired"] is True
+    assert coordinator.data.inventory[inv_id].expired is True
+
+
+# --- Live subscription ------------------------------------------------------
+async def test_ws_subscribe_pushes_on_change(hass: HomeAssistant, setup_vessel) -> None:
+    msg = ws.ws_subscribe._ws_schema({"id": 22, "type": "boat_management/subscribe"})
+    conn = _FakeConnection()
+    ws.ws_subscribe(hass, conn, msg)
+    # Subscribe acknowledges and registers an unsub.
+    assert 22 in conn.results
+    assert 22 in conn.subscriptions
+
+    # A mutation through the normal write path should push a change event.
+    await _seed_systems(hass)
+    events = [m for m in conn.messages if m.get("type") == "event"]
+    assert events
+    assert events[0]["event"]["event"] == "changed"
+
+
+async def test_ws_subscribe_unsub_stops_pushes(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    msg = ws.ws_subscribe._ws_schema({"id": 23, "type": "boat_management/subscribe"})
+    conn = _FakeConnection()
+    ws.ws_subscribe(hass, conn, msg)
+    conn.subscriptions[23]()  # unsubscribe
+    await _seed_systems(hass)
+    assert not [m for m in conn.messages if m.get("type") == "event"]
+
+
+async def test_ws_subscribe_unknown_entry_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    msg = ws.ws_subscribe._ws_schema(
+        {"id": 24, "type": "boat_management/subscribe", "entry_id": "nope"}
+    )
+    conn = _FakeConnection()
+    ws.ws_subscribe(hass, conn, msg)
+    assert conn.errors[24][0] == "not_found"
