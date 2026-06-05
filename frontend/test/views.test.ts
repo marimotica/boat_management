@@ -4,12 +4,14 @@ import { BoatEquipmentView } from "../src/equipment-view";
 import { BoatInventoryView } from "../src/inventory-view";
 import { BoatCatalogueView } from "../src/catalogue-view";
 import { BoatWorkBoardView } from "../src/work-board-view";
+import { BoatSuggestionsView } from "../src/suggestions-view";
 import {
   catalogueRecord,
   equipmentRecord,
   inventoryRecord,
   mount,
   nextEvent,
+  suggestionRecord,
   systemRecord,
   workItemRecord,
 } from "./helpers";
@@ -17,6 +19,7 @@ import type {
   CatalogueTaskRecord,
   EquipmentRecord,
   InventoryRecord,
+  SuggestionRecord,
   SystemRecord,
   WorkItemRecord,
 } from "../src/types";
@@ -256,6 +259,74 @@ describe("<boat-work-board-view>", () => {
     });
     const event = nextEvent<WorkItemRecord>(el, "bm-edit");
     cards(el, "todo")[0].click();
+    expect((await event).detail).toBe(target);
+  });
+});
+
+describe("<boat-suggestions-view>", () => {
+  it("shows an empty state with no suggestions", async () => {
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [],
+    });
+    expect(el.shadowRoot!.querySelector(".empty")).not.toBeNull();
+    expect(el.shadowRoot!.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  it("renders title, reason, a human source label and the context chip", async () => {
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [
+        suggestionRecord({
+          title: "Restock impellers",
+          source: "inventory",
+          reason: "Stock 1 <= reorder level 2",
+          context_label: "Impeller",
+        }),
+      ],
+    });
+    const row = el.shadowRoot!.querySelector("li")!;
+    expect(row.textContent).toContain("Restock impellers");
+    expect(row.textContent).toContain("Stock 1 <= reorder level 2");
+    // Source token is mapped to a friendly label, not shown raw.
+    expect(row.textContent).toContain("Low stock");
+    expect(row.textContent).not.toContain("inventory");
+    expect(row.textContent).toContain("Impeller");
+  });
+
+  it("falls back to the raw source token for an unknown source", async () => {
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [suggestionRecord({ source: "future_source" })],
+    });
+    expect(el.shadowRoot!.querySelector(".chip")!.textContent).toContain(
+      "future_source",
+    );
+  });
+
+  it("offers an Apply button for actionable suggestions", async () => {
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [suggestionRecord({ already_open: false })],
+    });
+    expect(el.shadowRoot!.querySelector("button.apply")).not.toBeNull();
+    expect(el.shadowRoot!.textContent).not.toContain("On board");
+  });
+
+  it("shows an On board chip (no Apply) when work is already open", async () => {
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [suggestionRecord({ already_open: true })],
+    });
+    expect(el.shadowRoot!.querySelector("button.apply")).toBeNull();
+    expect(el.shadowRoot!.textContent).toContain("On board");
+  });
+
+  it("emits bm-apply with the tapped suggestion", async () => {
+    const target = suggestionRecord({
+      catalogue_task_id: "task-9",
+      title: "Service windlass",
+    });
+    const el = await mount<BoatSuggestionsView>("boat-suggestions-view", {
+      suggestions: [target],
+    });
+    const event = nextEvent<SuggestionRecord>(el, "bm-apply");
+    el.shadowRoot!.querySelector<HTMLButtonElement>("button.apply")!.click();
     expect((await event).detail).toBe(target);
   });
 });

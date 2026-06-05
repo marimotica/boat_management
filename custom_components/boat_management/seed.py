@@ -155,6 +155,27 @@ DEFAULT_CATALOGUE_TASKS: tuple[dict[str, Any], ...] = (
             {"source": TriggerSource.CALENDAR.value, "key": "annual"},
         ],
     },
+    # Restock is deliberately system-less: low stock can hit any domain, and a
+    # keyless inventory rule matches every low-stock category so the standing
+    # suggestion engine always has a task to point at.
+    {
+        "title": "Restock low inventory",
+        "description": "Reorder a consumable or spare that has hit its reorder level.",
+        "estimated_duration_minutes": 15,
+        "trigger_rules": [
+            {"source": TriggerSource.INVENTORY.value},
+        ],
+    },
+    {
+        "title": "Address failed inspection finding",
+        "system": "Safety",
+        "description": "Correct a defect raised by a failed inspection or survey.",
+        "estimated_duration_minutes": 60,
+        "safety_notes": "Do not return the vessel to service until the finding clears.",
+        "trigger_rules": [
+            {"source": TriggerSource.INSPECTION_RESULT.value, "key": "fail"},
+        ],
+    },
 )
 
 

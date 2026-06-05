@@ -3,6 +3,7 @@
 // ids, so the UI never invents them; create/update return the full record for
 // optimistic reconciliation.
 import type {
+  ApplyTriggerResult,
   BootstrapResult,
   CatalogueTaskRecord,
   ChangeEvent,
@@ -10,6 +11,7 @@ import type {
   HomeAssistant,
   InventoryRecord,
   MaintenanceLogRecord,
+  SuggestionsResult,
   SystemRecord,
   UnsubscribeFunc,
   WorkItemRecord,
@@ -66,6 +68,19 @@ export interface WorkItemDraftFields {
   operational_context_id?: string;
 }
 
+// Input for applying a trigger. Suggestion mode passes `catalogue_task_id` (plus
+// the suggestion's key/context) to instantiate exactly that task; event mode
+// omits it so the backend matcher selects tasks from the raw event. `value`
+// feeds threshold sources (engine hours, meter). `dry_run` plans without writing.
+export interface ApplyTriggerFields {
+  source: string;
+  catalogue_task_id?: string;
+  key?: string;
+  context_id?: string;
+  value?: number;
+  dry_run?: boolean;
+}
+
 export class BoatApi {
   constructor(private readonly hass: HomeAssistant) {}
 
@@ -78,6 +93,25 @@ export class BoatApi {
   subscribe(onChange: (event: ChangeEvent) => void): Promise<UnsubscribeFunc> {
     return this.hass.connection.subscribeMessage<ChangeEvent>(onChange, {
       type: "boat_management/subscribe",
+    });
+  }
+
+  // --- Operational intelligence --------------------------------------------
+  // Read-only: state-driven maintenance suggestions (low stock + calendar due).
+  // Each suggestion carries the trigger context to echo back to applyTrigger.
+  suggestions(): Promise<SuggestionsResult> {
+    return this.hass.callWS<SuggestionsResult>({
+      type: "boat_management/suggestions",
+    });
+  }
+
+  // Instantiate catalogue task(s) from an operational event or an accepted
+  // suggestion. The backend validates references and dedups against open work
+  // (so a double-apply is a safe no-op), then returns what it created.
+  applyTrigger(fields: ApplyTriggerFields): Promise<ApplyTriggerResult> {
+    return this.hass.callWS<ApplyTriggerResult>({
+      type: "boat_management/apply_trigger",
+      ...prune(fields),
     });
   }
 

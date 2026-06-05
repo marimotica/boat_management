@@ -74,10 +74,10 @@ from .import_export import (
     export_payload,
 )
 from .seed import apply_seed_catalogue
+from .suggestions import plan_trigger_application
 from .transitions import TransitionError
-from .triggers import TriggerEvent, plan_triggered_work
 from .validators import ValidationError
-from .work_items import create_work_item
+from .work_items import create_work_items_from_plan
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -566,6 +566,7 @@ def _trigger_schema() -> vol.Schema:
     return _base(
         {
             vol.Required("source"): cv.string,
+            vol.Optional("catalogue_task_id"): cv.string,
             vol.Optional("key"): cv.string,
             vol.Optional("context_id"): cv.string,
             vol.Optional("value"): vol.Coerce(float),
@@ -577,35 +578,26 @@ def _trigger_schema() -> vol.Schema:
 async def _trigger_handler(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     coordinator = _get_coordinator(hass, call)
     data = _strip_entry(dict(call.data))
-    event = TriggerEvent(
+    dry_run = bool(data.get("dry_run", False))
+
+    # Pure planning first (validates references, applies dedup): a dry-run can
+    # report exactly what a real apply would create without touching storage.
+    plan = plan_trigger_application(
+        coordinator.data,
         source=data["source"],
+        catalogue_task_id=data.get("catalogue_task_id"),
         key=data.get("key"),
         context_id=data.get("context_id"),
         value=data.get("value"),
     )
-    dry_run = bool(data.get("dry_run", False))
-
-    plan = plan_triggered_work(
-        event, coordinator.data.task_catalogue, coordinator.data.work_items
-    )
     created_ids: list[str] = []
     if not dry_run and plan.to_create:
-
-        def _create_all(boat: BoatData) -> list[str]:
-            ids: list[str] = []
-            for planned in plan.to_create:
-                wi = create_work_item(
-                    boat,
-                    catalogue_task_id=planned.catalogue_task_id,
-                    trigger_source=planned.trigger_source,
-                    trigger_key=planned.trigger_key,
-                    operational_context_id=planned.operational_context_id,
-                    actor=call.context.user_id,
-                )
-                ids.append(wi.id)
-            return ids
-
-        created_ids = await coordinator.async_execute(_create_all)
+        created = await coordinator.async_execute(
+            create_work_items_from_plan,
+            planned=plan.to_create,
+            actor=call.context.user_id,
+        )
+        created_ids = [wi.id for wi in created]
         coordinator.mark_trigger_run()
 
     return {

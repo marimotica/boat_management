@@ -200,6 +200,44 @@ export interface ChangeEvent {
   entry_id: string;
 }
 
+// A state-driven maintenance suggestion: an existing, active catalogue task
+// proposed for instantiation because current vessel state calls for it (low
+// stock or a calendar recurrence come due). Mirrors MaintenanceSuggestion
+// .to_dict(). It carries the exact trigger context the panel echoes back to
+// `apply_trigger` (source/key/context_id) so the backend instantiates precisely
+// this task. `already_open` flags work already in flight, so the panel can show
+// it without offering to create a duplicate. Suggestions never invent work — the
+// backend matcher/dedup remains authoritative.
+export interface SuggestionRecord {
+  catalogue_task_id: string;
+  title: string;
+  source: string;
+  key?: string | null;
+  context_id?: string | null;
+  context_label?: string | null;
+  reason: string;
+  dedup_key: string;
+  already_open: boolean;
+}
+
+export interface SuggestionsResult {
+  suggestions: SuggestionRecord[];
+  count: number;
+  open_count: number;
+}
+
+// Result of applying a trigger (an operational event or an accepted suggestion).
+// `would_create`/`skipped_existing` list catalogue task ids the plan resolved;
+// `created_work_item_ids` holds the new server-assigned ids on a real apply
+// (empty on a dry run, since nothing is written). The panel never invents these
+// ids — they come back from the backend.
+export interface ApplyTriggerResult {
+  dry_run: boolean;
+  would_create: string[];
+  skipped_existing: string[];
+  created_work_item_ids: string[];
+}
+
 // A structured websocket error as surfaced by HA's connection layer.
 export interface WsError {
   code: string;

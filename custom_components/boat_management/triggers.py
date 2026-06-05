@@ -167,3 +167,30 @@ def plan_triggered_work(
             to_create.append(planned)
 
     return TriggerPlan(to_create=to_create, skipped_existing=skipped)
+
+
+def plan_for_task(
+    catalogue_task_id: str,
+    source: str,
+    key: str | None,
+    context_id: str | None,
+    work_items: Mapping[str, WorkItem],
+) -> TriggerPlan:
+    """Plan a single, already-chosen catalogue task for a trigger context.
+
+    Used when a *specific* suggestion is accepted: the catalogue matcher is
+    bypassed (the task is already known) but the open-work dedup rule still
+    applies, so accepting the same suggestion twice never double-creates. Pure,
+    so the caller can present it as a dry-run before persisting.
+    """
+    key_str = dedup_key(catalogue_task_id, source, key, context_id)
+    planned = PlannedWork(
+        catalogue_task_id=catalogue_task_id,
+        dedup_key=key_str,
+        trigger_source=source,
+        trigger_key=key,
+        operational_context_id=context_id,
+    )
+    if key_str in existing_dedup_keys(work_items):
+        return TriggerPlan(skipped_existing=[planned])
+    return TriggerPlan(to_create=[planned])

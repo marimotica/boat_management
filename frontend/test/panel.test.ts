@@ -6,6 +6,7 @@ import type {
   CrewRecord,
   HomeAssistant,
   MaintenanceLogRecord,
+  SuggestionRecord,
   SystemRecord,
   WorkItemRecord,
 } from "../src/types";
@@ -99,6 +100,23 @@ function fakeBackend(options: { failOn?: string } = {}) {
       assigned_to: "crew-1",
     }),
   };
+
+  // One state-driven suggestion (a calendar task never completed). Applying it
+  // instantiates work and flips the suggestion to already_open on the next read,
+  // mirroring the backend's dedup-against-open-work behaviour.
+  let suggestions: SuggestionRecord[] = [
+    {
+      catalogue_task_id: "task-1",
+      title: "Service raw-water pump",
+      source: "calendar",
+      key: null,
+      context_id: null,
+      context_label: null,
+      reason: "Never completed",
+      dedup_key: "task-1|calendar||",
+      already_open: false,
+    },
+  ];
 
   const bootstrap = (): BootstrapResult => ({
     entry_id: "entry-1",
@@ -224,6 +242,34 @@ function fakeBackend(options: { failOn?: string } = {}) {
             notes: (msg.notes as string) ?? null,
           };
           return log[id];
+        }
+        case "boat_management/suggestions":
+          return {
+            suggestions: [...suggestions],
+            count: suggestions.length,
+            open_count: suggestions.filter((s) => s.already_open).length,
+          };
+        case "boat_management/apply_trigger": {
+          // Instantiate work from the suggestion's echoed-back context, then
+          // mark the suggestion as represented by open work (already_open).
+          const taskId = msg.catalogue_task_id as string;
+          const id = `wi-${seq++}`;
+          workItems[id] = workItemRecord({
+            id,
+            catalogue_task_id: taskId,
+            title: "Service raw-water pump",
+            status: "todo",
+            trigger_source: msg.source as string,
+          });
+          suggestions = suggestions.map((s) =>
+            s.catalogue_task_id === taskId ? { ...s, already_open: true } : s,
+          );
+          return {
+            dry_run: false,
+            would_create: [taskId],
+            skipped_existing: [],
+            created_work_item_ids: [id],
+          };
         }
         default:
           throw new Error(`unexpected command ${type}`);
@@ -627,5 +673,99 @@ describe("<boat-management-panel> work", () => {
     expect(workItems["wi-review"].status).toBe("done");
     // A new immutable log entry was appended (seeded log-1 plus the new one).
     expect(Object.keys(log).length).toBe(2);
+  });
+});
+
+describe("<boat-management-panel> suggestions", () => {
+  function suggestionsView(panel: HTMLElement) {
+    return panel.shadowRoot!.querySelector("boat-suggestions-view");
+  }
+  async function openOps(panel: BoatManagementPanel) {
+    const tab = [
+      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
+    ].find((b) => b.textContent!.includes("Ops"))!;
+    tab.click();
+    await update(panel);
+  }
+
+  it("renders state-driven suggestions fetched from the backend", async () => {
+    const { hass } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openOps(panel);
+    // Suggestions load on a separate command after bootstrap; wait it out.
+    await waitFor(() =>
+      Boolean(
+        suggestionsView(panel)?.shadowRoot!.textContent!.includes(
+          "Service raw-water pump",
+        ),
+      ),
+    );
+    expect(suggestionsView(panel)!.shadowRoot!.textContent).toContain(
+      "Never completed",
+    );
+  });
+
+  it("applies a suggestion: creates work, then refreshes it to On board", async () => {
+    const { hass, calls, workItems } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openOps(panel);
+    await waitFor(() =>
+      Boolean(suggestionsView(panel)?.shadowRoot!.querySelector("button.apply")),
+    );
+
+    suggestionsView(panel)!
+      .shadowRoot!.querySelector<HTMLButtonElement>("button.apply")!
+      .click();
+
+    await waitFor(() =>
+      calls.some((c) => c.type === "boat_management/apply_trigger"),
+    );
+    const applyCall = calls.find(
+      (c) => c.type === "boat_management/apply_trigger",
+    );
+    // The suggestion's trigger context is echoed back verbatim so the backend
+    // targets exactly this catalogue task; the panel never invents an id.
+    expect(applyCall).toMatchObject({
+      source: "calendar",
+      catalogue_task_id: "task-1",
+    });
+    expect(applyCall).not.toHaveProperty("id");
+    // A work item was instantiated from the suggestion (calendar-sourced, so it
+    // is distinguishable from the manual seeds).
+    expect(
+      Object.values(workItems).some(
+        (w) =>
+          w.trigger_source === "calendar" && w.catalogue_task_id === "task-1",
+      ),
+    ).toBe(true);
+    // After the refresh the suggestion is now represented by open work.
+    await waitFor(() =>
+      Boolean(
+        suggestionsView(panel)?.shadowRoot!.textContent!.includes("On board"),
+      ),
+    );
+    expect(
+      suggestionsView(panel)!.shadowRoot!.querySelector("button.apply"),
+    ).toBeNull();
+  });
+
+  it("surfaces an apply error in the main banner without crashing", async () => {
+    const { hass } = fakeBackend({ failOn: "boat_management/apply_trigger" });
+    const panel = await mountPanel(hass);
+    await openOps(panel);
+    await waitFor(() =>
+      Boolean(suggestionsView(panel)?.shadowRoot!.querySelector("button.apply")),
+    );
+
+    suggestionsView(panel)!
+      .shadowRoot!.querySelector<HTMLButtonElement>("button.apply")!
+      .click();
+
+    await waitFor(() =>
+      Boolean(panel.shadowRoot!.querySelector("main .banner")),
+    );
+    expect(
+      panel.shadowRoot!.querySelector("main .banner")!.textContent,
+    ).toContain("name already exists");
   });
 });

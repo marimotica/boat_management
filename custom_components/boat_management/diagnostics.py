@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN, STORAGE_VERSION, WorkItemStatus
 from .coordinator import BoatCoordinator
 from .data import BoatData
+from .equipment import equipment_due_for_maintenance
 from .validators import (
     check_equipment_references,
     check_inventory_quantities,
@@ -43,6 +44,7 @@ def build_diagnostics(coordinator: BoatCoordinator) -> dict[str, Any]:
 
     low_stock = sum(1 for i in data.inventory.values() if i.active and i.is_low_stock())
     expiring = sum(1 for i in data.inventory.values() if i.active and i.expired)
+    due_maintenance = len(equipment_due_for_maintenance(data))
 
     return {
         "config_entry_id": coordinator.entry.entry_id,
@@ -68,6 +70,7 @@ def build_diagnostics(coordinator: BoatCoordinator) -> dict[str, Any]:
         "work_item_counts_by_status": status_counts,
         "low_stock_count": low_stock,
         "expiring_inventory_count": expiring,
+        "due_maintenance_count": due_maintenance,
         "reference_integrity": {
             "problem_count": len(_reference_problems(data)),
             "problems": _reference_problems(data),

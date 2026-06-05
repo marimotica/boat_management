@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from homeassistant.core import HomeAssistant
 
 from custom_components.boat_management.const import DOMAIN, SERVICE_CREATE_SYSTEM
@@ -53,7 +55,12 @@ from custom_components.boat_management import websocket_api as ws  # noqa: E402
 from custom_components.boat_management.const import (  # noqa: E402
     WorkItemStatus,
 )
-from custom_components.boat_management.models import CrewMember  # noqa: E402
+from custom_components.boat_management.models import (  # noqa: E402
+    CrewMember,
+    InventoryItem,
+    TaskCatalogueItem,
+    TriggerRule,
+)
 
 
 class _FakeUser:
@@ -893,6 +900,156 @@ async def test_ws_reopen_creates_corrective_work_item(
     assert corrective["status"] == WorkItemStatus.TODO.value
     assert coordinator.data.work_items[wi_id].status == WorkItemStatus.DONE.value
     assert len(coordinator.data.maintenance_log) == log_count
+
+
+# --- Suggestions & apply_trigger (Phase 5) ----------------------------------
+def _seed_calendar_task(coordinator, task_id="cal", title="Annual safety") -> None:
+    coordinator.data.task_catalogue[task_id] = TaskCatalogueItem(
+        id=task_id,
+        title=title,
+        trigger_rules=[TriggerRule(source="calendar", key="annual")],
+    )
+
+
+def _seed_low_stock(coordinator) -> None:
+    coordinator.data.inventory["inv1"] = InventoryItem(
+        id="inv1",
+        name="Fuel filter",
+        quantity=Decimal("0"),
+        category="filters",
+        reorder_level=Decimal("2"),
+    )
+    coordinator.data.task_catalogue["inv"] = TaskCatalogueItem(
+        id="inv",
+        title="Restock filters",
+        trigger_rules=[TriggerRule(source="inventory", key="filters")],
+    )
+
+
+async def test_ws_suggestions_returns_state_driven(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    _seed_calendar_task(coordinator)
+    _seed_low_stock(coordinator)
+    conn = _call(
+        hass, ws.ws_suggestions, {"id": 90, "type": "boat_management/suggestions"}
+    )
+    result = conn.results[90]
+    assert result["count"] == 2
+    assert {s["source"] for s in result["suggestions"]} == {"calendar", "inventory"}
+    assert result["open_count"] == 0
+
+
+async def test_ws_suggestions_unknown_entry_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = _call(
+        hass,
+        ws.ws_suggestions,
+        {"id": 91, "type": "boat_management/suggestions", "entry_id": "nope"},
+    )
+    assert conn.errors[91][0] == "not_found"
+
+
+async def test_ws_apply_trigger_event_mode_creates(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.task_catalogue["t1"] = TaskCatalogueItem(
+        id="t1",
+        title="Winterize",
+        trigger_rules=[TriggerRule(source="seasonal_transition", key="winter")],
+    )
+    conn = await _call_write(
+        hass,
+        ws.ws_apply_trigger,
+        {
+            "id": 92,
+            "type": "boat_management/apply_trigger",
+            "source": "seasonal_transition",
+            "key": "winter",
+        },
+    )
+    result = conn.results[92]
+    assert result["would_create"] == ["t1"]
+    assert len(result["created_work_item_ids"]) == 1
+    assert len(coordinator.data.work_items) == 1
+
+
+async def test_ws_apply_trigger_dry_run_does_not_create(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.task_catalogue["t1"] = TaskCatalogueItem(
+        id="t1",
+        title="Winterize",
+        trigger_rules=[TriggerRule(source="seasonal_transition", key="winter")],
+    )
+    conn = await _call_write(
+        hass,
+        ws.ws_apply_trigger,
+        {
+            "id": 93,
+            "type": "boat_management/apply_trigger",
+            "source": "seasonal_transition",
+            "key": "winter",
+            "dry_run": True,
+        },
+    )
+    result = conn.results[93]
+    assert result["dry_run"] is True
+    assert result["would_create"] == ["t1"]
+    assert result["created_work_item_ids"] == []
+    assert coordinator.data.work_items == {}
+
+
+async def test_ws_apply_trigger_suggestion_mode_records_actor(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.task_catalogue["t1"] = TaskCatalogueItem(
+        id="t1",
+        title="Restock filters",
+        trigger_rules=[TriggerRule(source="inventory", key="filters")],
+    )
+    conn = await _call_write(
+        hass,
+        ws.ws_apply_trigger,
+        {
+            "id": 94,
+            "type": "boat_management/apply_trigger",
+            "source": "inventory",
+            "catalogue_task_id": "t1",
+            "key": "filters",
+            "context_id": "inv1",
+        },
+    )
+    result = conn.results[94]
+    assert result["would_create"] == ["t1"]
+    wi_id = result["created_work_item_ids"][0]
+    # The authenticated websocket user is recorded for the audit trail.
+    actors = {
+        e.actor for e in coordinator.data.audit_events.values() if e.object_id == wi_id
+    }
+    assert actors == {"test-user"}
+
+
+async def test_ws_apply_trigger_unknown_task_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = await _call_write(
+        hass,
+        ws.ws_apply_trigger,
+        {
+            "id": 95,
+            "type": "boat_management/apply_trigger",
+            "source": "inventory",
+            "catalogue_task_id": "missing",
+        },
+    )
+    assert 95 not in conn.results
+    assert conn.errors[95][0] == "invalid_request"
 
 
 # --- Live subscription ------------------------------------------------------

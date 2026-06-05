@@ -8,6 +8,7 @@ import type {
   HomeAssistant,
   InventoryRecord,
   MaintenanceLogRecord,
+  SuggestionRecord,
   SystemRecord,
   WorkItemRecord,
 } from "../src/types";
@@ -118,6 +119,23 @@ export function logRecord(
     completed_at_local: "2024-05-01 11:00",
     timezone_at_completion: "Europe/London",
     notes: null,
+    ...over,
+  };
+}
+
+export function suggestionRecord(
+  over: Partial<SuggestionRecord> = {},
+): SuggestionRecord {
+  return {
+    catalogue_task_id: "task-1",
+    title: "Service raw-water pump",
+    source: "calendar",
+    key: null,
+    context_id: null,
+    context_label: null,
+    reason: "Never completed",
+    dedup_key: "task-1|calendar||",
+    already_open: false,
     ...over,
   };
 }

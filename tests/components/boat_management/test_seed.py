@@ -35,8 +35,11 @@ def test_seed_tasks_reference_seeded_systems() -> None:
         for sid in task.system_refs:
             assert sid in system_ids
             linked += 1
-    # Every default task in this curated set references exactly one system.
-    assert linked == len(DEFAULT_CATALOGUE_TASKS)
+    # Most curated tasks reference exactly one system; a few (e.g. the
+    # system-less restock task) intentionally reference none, so the expected
+    # link count is derived from the specs rather than the task total.
+    expected = sum(1 for spec in DEFAULT_CATALOGUE_TASKS if spec.get("system"))
+    assert linked == expected
 
 
 def test_seed_is_idempotent() -> None:

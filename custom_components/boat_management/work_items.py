@@ -17,6 +17,7 @@ from .data import BoatData
 from .models import InventoryUsage, WorkItem, new_id
 from .timezone import utc_now
 from .transitions import assert_transition
+from .triggers import PlannedWork
 from .validators import (
     ValidationError,
     require_existing,
@@ -96,6 +97,34 @@ def create_work_item(
         now=instant,
     )
     return work_item
+
+
+def create_work_items_from_plan(
+    data: BoatData,
+    *,
+    planned: list[PlannedWork],
+    actor: str | None = None,
+    now: datetime | None = None,
+) -> list[WorkItem]:
+    """Instantiate work items for an already-deduplicated trigger plan.
+
+    Shared by the trigger service and the panel's apply-trigger websocket
+    command so both surfaces create identical, audited work. Deduplication is
+    the planner's job (see :mod:`triggers`); this only writes what survived it,
+    preserving each planned item's trigger provenance.
+    """
+    return [
+        create_work_item(
+            data,
+            catalogue_task_id=item.catalogue_task_id,
+            trigger_source=item.trigger_source,
+            trigger_key=item.trigger_key,
+            operational_context_id=item.operational_context_id,
+            actor=actor,
+            now=now,
+        )
+        for item in planned
+    ]
 
 
 def _get_work_item(data: BoatData, work_item_id: str) -> WorkItem:

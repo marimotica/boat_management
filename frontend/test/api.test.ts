@@ -380,3 +380,58 @@ describe("BoatApi work items", () => {
     });
   });
 });
+
+describe("BoatApi operational intelligence", () => {
+  it("suggestions sends only the command type", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).suggestions();
+    expect(calls[0]).toEqual({ type: "boat_management/suggestions" });
+  });
+
+  it("applyTrigger (suggestion mode) carries the task id and context", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).applyTrigger({
+      source: "inventory",
+      catalogue_task_id: "task-1",
+      key: "filters",
+      context_id: "inv-1",
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/apply_trigger",
+      source: "inventory",
+      catalogue_task_id: "task-1",
+      key: "filters",
+      context_id: "inv-1",
+    });
+  });
+
+  it("applyTrigger prunes blank key/context but keeps the source", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).applyTrigger({
+      source: "calendar",
+      catalogue_task_id: "task-1",
+      key: undefined,
+      context_id: "",
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/apply_trigger",
+      source: "calendar",
+      catalogue_task_id: "task-1",
+    });
+  });
+
+  it("applyTrigger (event mode) keeps a numeric value and drops absent optionals", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).applyTrigger({
+      source: "engine_hours",
+      value: 250,
+      key: undefined,
+      context_id: undefined,
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/apply_trigger",
+      source: "engine_hours",
+      value: 250,
+    });
+  });
+});

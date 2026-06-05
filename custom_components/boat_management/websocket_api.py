@@ -38,8 +38,10 @@ from .import_export import (
     export_payload,
 )
 from .search import filter_serialized
+from .suggestions import build_suggestions, plan_trigger_application
 from .transitions import TransitionError
 from .validators import ValidationError
+from .work_items import create_work_items_from_plan
 
 _LIST_COLLECTIONS = (
     "systems",
@@ -69,10 +71,12 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_overview)
     websocket_api.async_register_command(hass, ws_bootstrap)
     websocket_api.async_register_command(hass, ws_list_collection)
+    websocket_api.async_register_command(hass, ws_suggestions)
     websocket_api.async_register_command(hass, ws_export)
     websocket_api.async_register_command(hass, ws_export_logbook)
     websocket_api.async_register_command(hass, ws_import_preview)
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_apply_trigger)
     for handler in WRITE_COMMANDS.values():
         websocket_api.async_register_command(hass, handler)
 
@@ -169,6 +173,39 @@ def ws_list_collection(
             "total": len(serialized),
             "count": len(items),
             "items": items,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "boat_management/suggestions",
+        vol.Optional("entry_id"): str,
+    }
+)
+@callback
+def ws_suggestions(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return state-driven maintenance suggestions (read-only).
+
+    Each suggestion carries the exact trigger context the panel echoes back to
+    ``apply_trigger`` to instantiate it, plus an ``already_open`` flag so the UI
+    can show in-flight work without offering to duplicate it.
+    """
+    coordinator = _resolve(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No matching vessel")
+        return
+    suggestions = build_suggestions(coordinator.data)
+    connection.send_result(
+        msg["id"],
+        {
+            "suggestions": [s.to_dict() for s in suggestions],
+            "count": len(suggestions),
+            "open_count": sum(1 for s in suggestions if s.already_open),
         },
     )
 
@@ -295,6 +332,88 @@ def ws_subscribe(
         _forward_change
     )
     connection.send_result(msg["id"])
+
+
+# ---------------------------------------------------------------------------
+# Apply trigger: instantiate catalogue tasks from an operational event or an
+# accepted suggestion. Planning is pure (validates refs, dedups against open
+# work) and runs first, so a dry run reports exactly what a real apply would
+# create without touching storage. Only the actual create goes through the
+# coordinator lock + audit, mirroring the apply_trigger_rules service.
+# ---------------------------------------------------------------------------
+async def _apply_trigger(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    coordinator = _resolve(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No matching vessel")
+        return
+    dry_run = bool(msg.get("dry_run", False))
+    try:
+        plan = plan_trigger_application(
+            coordinator.data,
+            source=msg["source"],
+            catalogue_task_id=msg.get("catalogue_task_id"),
+            key=msg.get("key"),
+            context_id=msg.get("context_id"),
+            value=msg.get("value"),
+        )
+    except (ValidationError, TransitionError) as err:
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+    created_ids: list[str] = []
+    if not dry_run and plan.to_create:
+        created = await coordinator.async_execute(
+            create_work_items_from_plan,
+            planned=plan.to_create,
+            actor=connection.user.id if connection.user else None,
+        )
+        created_ids = [wi.id for wi in created]
+        coordinator.mark_trigger_run()
+    connection.send_result(
+        msg["id"],
+        {
+            "dry_run": dry_run,
+            "would_create": [p.catalogue_task_id for p in plan.to_create],
+            "skipped_existing": [p.catalogue_task_id for p in plan.skipped_existing],
+            "created_work_item_ids": created_ids,
+        },
+    )
+
+
+def _build_apply_trigger_command() -> Callable[..., Any]:
+    """Build the registered async ``apply_trigger`` command.
+
+    Wrapped via ``async_response`` so ``__wrapped__`` exposes the raw coroutine
+    for unit tests, matching the write-command pattern below.
+    """
+    schema = {
+        vol.Required("type"): "boat_management/apply_trigger",
+        vol.Optional("entry_id"): str,
+        vol.Required("source"): str,
+        vol.Optional("catalogue_task_id"): str,
+        vol.Optional("key"): str,
+        vol.Optional("context_id"): str,
+        vol.Optional("value"): vol.Coerce(float),
+        vol.Optional("dry_run", default=False): bool,
+    }
+
+    async def _handler(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        await _apply_trigger(hass, connection, msg)
+
+    _handler.__name__ = "boat_management_apply_trigger"
+    return websocket_api.websocket_command(schema)(
+        websocket_api.async_response(_handler)
+    )
+
+
+ws_apply_trigger = _build_apply_trigger_command()
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import "./catalogue-view";
 import "./catalogue-sheet";
 import "./work-board-view";
 import "./work-item-sheet";
+import "./suggestions-view";
 import { isLowStock } from "./inventory-view";
 import type { SystemDraft } from "./system-sheet";
 import type { EquipmentDraft } from "./equipment-sheet";
@@ -30,12 +31,13 @@ import {
   type MaintenanceLogRecord,
   type PanelInfo,
   type SystemRecord,
+  type SuggestionRecord,
   type UnsubscribeFunc,
   type VesselRecord,
   type WorkItemRecord,
 } from "./types";
 
-type Tab = "systems" | "equipment" | "inventory" | "tasks" | "work" | "log";
+type Tab = "systems" | "equipment" | "inventory" | "tasks" | "work" | "ops" | "log";
 type ListTab = "systems" | "equipment" | "inventory" | "tasks";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -44,6 +46,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "inventory", label: "Inventory" },
   { id: "tasks", label: "Tasks" },
   { id: "work", label: "Work" },
+  { id: "ops", label: "Ops" },
   { id: "log", label: "Log" },
 ];
 
@@ -181,6 +184,7 @@ export class BoatManagementPanel extends LitElement {
   @state() private _crew: CrewRecord[] = [];
   @state() private _log: MaintenanceLogRecord[] = [];
   @state() private _work: WorkItemRecord[] = [];
+  @state() private _suggestions: SuggestionRecord[] = [];
   @state() private _counts: Record<string, number> = {};
   @state() private _tab: Tab = "systems";
   @state() private _query = "";
@@ -252,6 +256,15 @@ export class BoatManagementPanel extends LitElement {
       this._error = describe(err);
     } finally {
       this._loading = false;
+    }
+    // Suggestions are derived/auxiliary: fetch them separately so a failure here
+    // (e.g. an older backend without the command) never blanks the panel. A stale
+    // list is preferable to a broken shell.
+    try {
+      this._suggestions = (await this._api!.suggestions()).suggestions;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn("boat_management: suggestions failed", err);
     }
   }
 
@@ -344,6 +357,11 @@ export class BoatManagementPanel extends LitElement {
           .crewNames=${this._crewNames()}
           @bm-edit=${this._onEditWork}
         ></boat-work-board-view>`;
+      case "ops":
+        return html`<boat-suggestions-view
+          .suggestions=${this._suggestions}
+          @bm-apply=${this._onApplySuggestion}
+        ></boat-suggestions-view>`;
       default: {
         const count = this._counts[this._tabCollection()] ?? 0;
         const label = TABS.find((t) => t.id === this._tab)!.label;
@@ -882,6 +900,31 @@ export class BoatManagementPanel extends LitElement {
           api.verifyWorkItem(a.id, a.verified_by, a.notes),
         );
         return;
+    }
+  }
+
+  // --- Suggestion writes ---------------------------------------------------
+  // Applying a suggestion has no sheet: it instantiates work directly from the
+  // suggestion's trigger context (echoed back verbatim so the backend targets
+  // exactly this catalogue task). Errors surface in the main banner, which is
+  // visible on this tab; a double-tap is safe because the backend dedups against
+  // open work. After the write we refresh, so the applied suggestion flips to
+  // "On board" (now represented by open work).
+  private _onApplySuggestion(e: CustomEvent<SuggestionRecord>): void {
+    void this._applySuggestion(e.detail);
+  }
+
+  private async _applySuggestion(s: SuggestionRecord): Promise<void> {
+    try {
+      await this._api!.applyTrigger({
+        source: s.source,
+        catalogue_task_id: s.catalogue_task_id,
+        key: s.key ?? undefined,
+        context_id: s.context_id ?? undefined,
+      });
+      await this._refresh();
+    } catch (err) {
+      this._error = describe(err);
     }
   }
 }

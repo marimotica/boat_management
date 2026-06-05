@@ -6,6 +6,7 @@ from custom_components.boat_management.models import TaskCatalogueItem, TriggerR
 from custom_components.boat_management.triggers import (
     TriggerEvent,
     dedup_key,
+    plan_for_task,
     plan_triggered_work,
 )
 from custom_components.boat_management.work_items import create_work_item
@@ -75,3 +76,33 @@ def test_deduplication_against_open_work() -> None:
 def test_dedup_key_stable() -> None:
     assert dedup_key("t", "manual", "k", "c") == "t|manual|k|c"
     assert dedup_key("t", "manual", None, None) == "t|manual||"
+
+
+def test_plan_for_task_bypasses_matcher() -> None:
+    # No catalogue lookup: the task is already chosen (e.g. accepted suggestion),
+    # so a single planned item is produced with the given trigger provenance.
+    plan = plan_for_task("task1", "inventory", "filters", "inv9", {})
+    assert plan.created_count == 1
+    planned = plan.to_create[0]
+    assert planned.catalogue_task_id == "task1"
+    assert planned.trigger_source == "inventory"
+    assert planned.trigger_key == "filters"
+    assert planned.operational_context_id == "inv9"
+    assert planned.dedup_key == dedup_key("task1", "inventory", "filters", "inv9")
+
+
+def test_plan_for_task_dedups_against_open_work() -> None:
+    data = make_data()
+    catalogue = _catalogue_with_trigger("inventory", key="filters")
+    data.task_catalogue.update(catalogue)
+    create_work_item(
+        data,
+        catalogue_task_id="task1",
+        trigger_source="inventory",
+        trigger_key="filters",
+        operational_context_id="inv9",
+    )
+    plan = plan_for_task("task1", "inventory", "filters", "inv9", data.work_items)
+    assert plan.created_count == 0
+    assert plan.skipped_count == 1
+    assert plan.skipped_existing[0].catalogue_task_id == "task1"
