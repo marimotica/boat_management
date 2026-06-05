@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isWsError } from "../src/types";
 import { isLowStock } from "../src/inventory-view";
+import { BOARD_COLUMNS, statusLabel } from "../src/work";
 import { inventoryRecord } from "./helpers";
 
 describe("isWsError", () => {
@@ -66,5 +67,32 @@ describe("isLowStock", () => {
     expect(
       isLowStock(inventoryRecord({ quantity: "10", reorder_level: "9" })),
     ).toBe(false);
+  });
+});
+
+describe("work status metadata", () => {
+  it("maps known statuses to friendly labels", () => {
+    expect(statusLabel("todo")).toBe("To Do");
+    expect(statusLabel("in_progress")).toBe("In Progress");
+    expect(statusLabel("review")).toBe("Review");
+    expect(statusLabel("blocked")).toBe("Blocked");
+    expect(statusLabel("deferred")).toBe("Deferred");
+    expect(statusLabel("done")).toBe("Done");
+    expect(statusLabel("cancelled")).toBe("Cancelled");
+  });
+
+  it("falls back to the raw status for unknown values", () => {
+    expect(statusLabel("mystery")).toBe("mystery");
+  });
+
+  it("orders the board columns by lifecycle and omits cancelled", () => {
+    expect(BOARD_COLUMNS.map((c) => c.status)).toEqual([
+      "todo",
+      "in_progress",
+      "review",
+      "blocked",
+      "deferred",
+      "done",
+    ]);
   });
 });

@@ -50,6 +50,10 @@ def test_filter_query_and_limit_combined() -> None:
 # This avoids spinning up the full HTTP/auth server (and its unrelated optional
 # dependencies) while still testing the real handler + schema.
 from custom_components.boat_management import websocket_api as ws  # noqa: E402
+from custom_components.boat_management.const import (  # noqa: E402
+    WorkItemStatus,
+)
+from custom_components.boat_management.models import CrewMember  # noqa: E402
 
 
 class _FakeUser:
@@ -594,6 +598,301 @@ async def test_ws_mark_inventory_expired_sets_flag(
     )
     assert conn.results[45]["expired"] is True
     assert coordinator.data.inventory[inv_id].expired is True
+
+
+# --- Work item lifecycle writes (Phase 4) -----------------------------------
+async def _seed_task(
+    hass: HomeAssistant, msg_id: int, title: str = "Oil change"
+) -> str:
+    """Create a catalogue task via the write command and return its id."""
+    created = await _call_write(
+        hass,
+        _write("create_catalogue_task"),
+        {
+            "id": msg_id,
+            "type": "boat_management/create_catalogue_task",
+            "title": title,
+        },
+    )
+    return created.results[msg_id]["id"]
+
+
+async def _create_work_item(hass: HomeAssistant, msg_id: int, task_id: str) -> str:
+    created = await _call_write(
+        hass,
+        _write("create_work_item"),
+        {
+            "id": msg_id,
+            "type": "boat_management/create_work_item",
+            "catalogue_task_id": task_id,
+        },
+    )
+    return created.results[msg_id]["id"]
+
+
+async def test_ws_create_work_item_from_catalogue_task(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    task_id = await _seed_task(hass, 50)
+    conn = await _call_write(
+        hass,
+        _write("create_work_item"),
+        {
+            "id": 51,
+            "type": "boat_management/create_work_item",
+            "catalogue_task_id": task_id,
+        },
+    )
+    result = conn.results[51]
+    assert result["id"] in coordinator.data.work_items
+    assert result["status"] == WorkItemStatus.TODO.value
+    # Title defaults to the catalogue task's title.
+    assert result["title"] == "Oil change"
+
+
+async def test_ws_create_work_item_unknown_task_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    conn = await _call_write(
+        hass,
+        _write("create_work_item"),
+        {
+            "id": 52,
+            "type": "boat_management/create_work_item",
+            "catalogue_task_id": "nope",
+        },
+    )
+    assert 52 not in conn.results
+    assert conn.errors[52][0] == "invalid_request"
+
+
+async def test_ws_claim_work_item_assigns_crew(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.crew["c1"] = CrewMember(id="c1", name="Alex", role="crew")
+    task_id = await _seed_task(hass, 53)
+    wi_id = await _create_work_item(hass, 54, task_id)
+    conn = await _call_write(
+        hass,
+        _write("claim_work_item"),
+        {
+            "id": 55,
+            "type": "boat_management/claim_work_item",
+            "work_item_id": wi_id,
+            "crew_id": "c1",
+        },
+    )
+    assert conn.results[55]["assigned_to"] == "c1"
+    assert coordinator.data.work_items[wi_id].assigned_to == "c1"
+
+
+async def test_ws_work_item_full_lifecycle_to_log_entry(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.crew["cap"] = CrewMember(id="cap", name="Captain", role="captain")
+    task_id = await _seed_task(hass, 56)
+    wi_id = await _create_work_item(hass, 57, task_id)
+    await _call_write(
+        hass,
+        _write("start_work_item"),
+        {"id": 58, "type": "boat_management/start_work_item", "work_item_id": wi_id},
+    )
+    await _call_write(
+        hass,
+        _write("submit_for_review"),
+        {"id": 59, "type": "boat_management/submit_for_review", "work_item_id": wi_id},
+    )
+    conn = await _call_write(
+        hass,
+        _write("verify_work_item"),
+        {
+            "id": 60,
+            "type": "boat_management/verify_work_item",
+            "work_item_id": wi_id,
+            "verified_by": "cap",
+        },
+    )
+    # Verification returns the immutable maintenance log entry, not the item.
+    entry = conn.results[60]
+    assert entry["work_item_id"] == wi_id
+    assert entry["id"] in coordinator.data.maintenance_log
+    assert coordinator.data.work_items[wi_id].status == WorkItemStatus.DONE.value
+
+
+async def test_ws_verify_by_non_verifier_role_errors(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.crew["deck"] = CrewMember(id="deck", name="Deckhand", role="crew")
+    task_id = await _seed_task(hass, 61)
+    wi_id = await _create_work_item(hass, 62, task_id)
+    await _call_write(
+        hass,
+        _write("start_work_item"),
+        {"id": 63, "type": "boat_management/start_work_item", "work_item_id": wi_id},
+    )
+    await _call_write(
+        hass,
+        _write("submit_for_review"),
+        {"id": 64, "type": "boat_management/submit_for_review", "work_item_id": wi_id},
+    )
+    conn = await _call_write(
+        hass,
+        _write("verify_work_item"),
+        {
+            "id": 65,
+            "type": "boat_management/verify_work_item",
+            "work_item_id": wi_id,
+            "verified_by": "deck",
+        },
+    )
+    assert 65 not in conn.results
+    assert conn.errors[65][0] == "invalid_request"
+    # No history was written and the item stays in review (no partial writes).
+    assert coordinator.data.maintenance_log == {}
+    assert coordinator.data.work_items[wi_id].status == WorkItemStatus.REVIEW.value
+
+
+async def test_ws_verify_consumes_submitted_inventory(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.crew["cap"] = CrewMember(id="cap", name="Captain", role="captain")
+    task_id = await _seed_task(hass, 79)
+    inv = await _call_write(
+        hass,
+        _write("create_inventory_item"),
+        {
+            "id": 80,
+            "type": "boat_management/create_inventory_item",
+            "name": "Engine oil",
+            "quantity": 10,
+        },
+    )
+    inv_id = inv.results[80]["id"]
+    wi_id = await _create_work_item(hass, 81, task_id)
+    await _call_write(
+        hass,
+        _write("start_work_item"),
+        {"id": 82, "type": "boat_management/start_work_item", "work_item_id": wi_id},
+    )
+    await _call_write(
+        hass,
+        _write("submit_for_review"),
+        {
+            "id": 83,
+            "type": "boat_management/submit_for_review",
+            "work_item_id": wi_id,
+            "inventory_used": [{"inventory_id": inv_id, "quantity": "3"}],
+        },
+    )
+    await _call_write(
+        hass,
+        _write("verify_work_item"),
+        {
+            "id": 84,
+            "type": "boat_management/verify_work_item",
+            "work_item_id": wi_id,
+            "verified_by": "cap",
+        },
+    )
+    # Inventory is deducted on verification, not at submit time.
+    assert str(coordinator.data.inventory[inv_id].quantity) == "7"
+
+
+async def test_ws_block_then_unblock_work_item(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    task_id = await _seed_task(hass, 66)
+    wi_id = await _create_work_item(hass, 67, task_id)
+    blocked = await _call_write(
+        hass,
+        _write("block_work_item"),
+        {
+            "id": 68,
+            "type": "boat_management/block_work_item",
+            "work_item_id": wi_id,
+            "block_reason": "waiting on part",
+        },
+    )
+    assert blocked.results[68]["status"] == WorkItemStatus.BLOCKED.value
+    assert blocked.results[68]["block_reason"] == "waiting on part"
+    unblocked = await _call_write(
+        hass,
+        _write("unblock_work_item"),
+        {
+            "id": 69,
+            "type": "boat_management/unblock_work_item",
+            "work_item_id": wi_id,
+        },
+    )
+    # Unblock clears the reason and returns to the active flow (todo by default).
+    assert unblocked.results[69]["status"] == WorkItemStatus.TODO.value
+    assert coordinator.data.work_items[wi_id].block_reason is None
+
+
+async def test_ws_cancel_work_item(hass: HomeAssistant, setup_vessel) -> None:
+    _entry, coordinator = setup_vessel
+    task_id = await _seed_task(hass, 70)
+    wi_id = await _create_work_item(hass, 71, task_id)
+    conn = await _call_write(
+        hass,
+        _write("cancel_work_item"),
+        {
+            "id": 72,
+            "type": "boat_management/cancel_work_item",
+            "work_item_id": wi_id,
+            "reason": "duplicate",
+        },
+    )
+    assert conn.results[72]["status"] == WorkItemStatus.CANCELLED.value
+
+
+async def test_ws_reopen_creates_corrective_work_item(
+    hass: HomeAssistant, setup_vessel
+) -> None:
+    _entry, coordinator = setup_vessel
+    coordinator.data.crew["cap"] = CrewMember(id="cap", name="Captain", role="captain")
+    task_id = await _seed_task(hass, 73)
+    wi_id = await _create_work_item(hass, 74, task_id)
+    await _call_write(
+        hass,
+        _write("start_work_item"),
+        {"id": 75, "type": "boat_management/start_work_item", "work_item_id": wi_id},
+    )
+    await _call_write(
+        hass,
+        _write("submit_for_review"),
+        {"id": 76, "type": "boat_management/submit_for_review", "work_item_id": wi_id},
+    )
+    await _call_write(
+        hass,
+        _write("verify_work_item"),
+        {
+            "id": 77,
+            "type": "boat_management/verify_work_item",
+            "work_item_id": wi_id,
+            "verified_by": "cap",
+        },
+    )
+    log_count = len(coordinator.data.maintenance_log)
+    conn = await _call_write(
+        hass,
+        _write("reopen_work_item"),
+        {"id": 78, "type": "boat_management/reopen_work_item", "work_item_id": wi_id},
+    )
+    corrective = conn.results[78]
+    # Reopen creates a NEW corrective item; the original done item and its
+    # immutable log entry are preserved (history is never deleted).
+    assert corrective["id"] != wi_id
+    assert corrective["id"] in coordinator.data.work_items
+    assert corrective["status"] == WorkItemStatus.TODO.value
+    assert coordinator.data.work_items[wi_id].status == WorkItemStatus.DONE.value
+    assert len(coordinator.data.maintenance_log) == log_count
 
 
 # --- Live subscription ------------------------------------------------------

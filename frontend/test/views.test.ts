@@ -3,6 +3,7 @@ import { BoatSystemsView } from "../src/systems-view";
 import { BoatEquipmentView } from "../src/equipment-view";
 import { BoatInventoryView } from "../src/inventory-view";
 import { BoatCatalogueView } from "../src/catalogue-view";
+import { BoatWorkBoardView } from "../src/work-board-view";
 import {
   catalogueRecord,
   equipmentRecord,
@@ -10,12 +11,14 @@ import {
   mount,
   nextEvent,
   systemRecord,
+  workItemRecord,
 } from "./helpers";
 import type {
   CatalogueTaskRecord,
   EquipmentRecord,
   InventoryRecord,
   SystemRecord,
+  WorkItemRecord,
 } from "../src/types";
 
 afterEach(() => {
@@ -174,6 +177,85 @@ describe("<boat-catalogue-view>", () => {
     });
     const event = nextEvent<CatalogueTaskRecord>(el, "bm-edit");
     el.shadowRoot!.querySelector<HTMLLIElement>("li")!.click();
+    expect((await event).detail).toBe(target);
+  });
+});
+
+describe("<boat-work-board-view>", () => {
+  it("shows an empty state when there is no active work", async () => {
+    const el = await mount<BoatWorkBoardView>("boat-work-board-view", {
+      items: [],
+    });
+    expect(el.shadowRoot!.querySelector(".empty")).not.toBeNull();
+    expect(el.shadowRoot!.querySelector(".board")).toBeNull();
+  });
+
+  function cards(el: HTMLElement, status: string): HTMLElement[] {
+    return [
+      ...el.shadowRoot!.querySelectorAll<HTMLElement>(
+        `.col[data-status="${status}"] .card`,
+      ),
+    ];
+  }
+
+  it("groups items into their status columns with a count badge", async () => {
+    const el = await mount<BoatWorkBoardView>("boat-work-board-view", {
+      items: [
+        workItemRecord({ id: "w1", status: "todo", title: "A" }),
+        workItemRecord({ id: "w2", status: "todo", title: "B" }),
+        workItemRecord({ id: "w3", status: "review", title: "C" }),
+      ],
+    });
+    expect(cards(el, "todo")).toHaveLength(2);
+    expect(cards(el, "review")).toHaveLength(1);
+    expect(cards(el, "in_progress")).toHaveLength(0);
+    const todoCol = el.shadowRoot!.querySelector(
+      '.col[data-status="todo"] .col-count',
+    )!;
+    expect(todoCol.textContent!.trim()).toBe("2");
+  });
+
+  it("omits cancelled work — it is terminal and has no column", async () => {
+    const el = await mount<BoatWorkBoardView>("boat-work-board-view", {
+      items: [
+        workItemRecord({ id: "w1", status: "todo", title: "Live" }),
+        workItemRecord({ id: "w2", status: "cancelled", title: "Scrapped" }),
+      ],
+    });
+    expect(el.shadowRoot!.textContent).not.toContain("Scrapped");
+    expect(
+      el.shadowRoot!.querySelector('.col[data-status="cancelled"]'),
+    ).toBeNull();
+  });
+
+  it("resolves the assignee name, due date and block reason on a card", async () => {
+    const el = await mount<BoatWorkBoardView>("boat-work-board-view", {
+      items: [
+        workItemRecord({
+          id: "w1",
+          status: "blocked",
+          title: "Service pump",
+          assigned_to: "crew-1",
+          due_date: "2024-06-01",
+          block_reason: "waiting on impeller",
+        }),
+      ],
+      crewNames: { "crew-1": "Sam" },
+    });
+    const card = cards(el, "blocked")[0];
+    expect(card.textContent).toContain("Service pump");
+    expect(card.textContent).toContain("Sam");
+    expect(card.textContent).toContain("2024-06-01");
+    expect(card.textContent).toContain("waiting on impeller");
+  });
+
+  it("emits bm-edit with the tapped record", async () => {
+    const target = workItemRecord({ id: "w9", status: "todo", title: "Tap me" });
+    const el = await mount<BoatWorkBoardView>("boat-work-board-view", {
+      items: [target],
+    });
+    const event = nextEvent<WorkItemRecord>(el, "bm-edit");
+    cards(el, "todo")[0].click();
     expect((await event).detail).toBe(target);
   });
 });

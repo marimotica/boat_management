@@ -244,3 +244,139 @@ describe("BoatApi catalogue", () => {
     });
   });
 });
+
+describe("BoatApi work items", () => {
+  it("createWorkItem drops blanks but keeps the catalogue task id", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).createWorkItem({
+      catalogue_task_id: "task-1",
+      title: "",
+      assigned_to: undefined,
+      due_date: "2024-06-01",
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/create_work_item",
+      catalogue_task_id: "task-1",
+      due_date: "2024-06-01",
+    });
+  });
+
+  it("createWorkItem keeps populated optionals", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).createWorkItem({
+      catalogue_task_id: "task-1",
+      title: "Service pump",
+      assigned_to: "crew-1",
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/create_work_item",
+      catalogue_task_id: "task-1",
+      title: "Service pump",
+      assigned_to: "crew-1",
+    });
+  });
+
+  it("claimWorkItem sends both ids", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).claimWorkItem("wi-1", "crew-2");
+    expect(calls[0]).toEqual({
+      type: "boat_management/claim_work_item",
+      work_item_id: "wi-1",
+      crew_id: "crew-2",
+    });
+  });
+
+  it("startWorkItem references the id only", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).startWorkItem("wi-1");
+    expect(calls[0]).toEqual({
+      type: "boat_management/start_work_item",
+      work_item_id: "wi-1",
+    });
+  });
+
+  it("submitForReview omits absent notes, includes them when given", async () => {
+    const { hass, calls } = fakeHass();
+    const api = new BoatApi(hass);
+    await api.submitForReview("wi-1");
+    expect(calls[0]).toEqual({
+      type: "boat_management/submit_for_review",
+      work_item_id: "wi-1",
+    });
+    await api.submitForReview("wi-1", "Replaced impeller");
+    expect(calls[1]).toEqual({
+      type: "boat_management/submit_for_review",
+      work_item_id: "wi-1",
+      completion_notes: "Replaced impeller",
+    });
+  });
+
+  it("blockWorkItem omits an absent reason", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).blockWorkItem("wi-1");
+    expect(calls[0]).toEqual({
+      type: "boat_management/block_work_item",
+      work_item_id: "wi-1",
+    });
+  });
+
+  it("deferWorkItem and cancelWorkItem carry an optional reason", async () => {
+    const { hass, calls } = fakeHass();
+    const api = new BoatApi(hass);
+    await api.deferWorkItem("wi-1", "after passage");
+    expect(calls[0]).toEqual({
+      type: "boat_management/defer_work_item",
+      work_item_id: "wi-1",
+      reason: "after passage",
+    });
+    await api.cancelWorkItem("wi-1");
+    expect(calls[1]).toEqual({
+      type: "boat_management/cancel_work_item",
+      work_item_id: "wi-1",
+    });
+  });
+
+  it("unblockWorkItem omits an absent target, includes it when given", async () => {
+    const { hass, calls } = fakeHass();
+    const api = new BoatApi(hass);
+    await api.unblockWorkItem("wi-1");
+    expect(calls[0]).toEqual({
+      type: "boat_management/unblock_work_item",
+      work_item_id: "wi-1",
+    });
+    await api.unblockWorkItem("wi-1", "in_progress");
+    expect(calls[1]).toEqual({
+      type: "boat_management/unblock_work_item",
+      work_item_id: "wi-1",
+      target: "in_progress",
+    });
+  });
+
+  it("reopenWorkItem carries an optional reason", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).reopenWorkItem("wi-1", "leak returned");
+    expect(calls[0]).toEqual({
+      type: "boat_management/reopen_work_item",
+      work_item_id: "wi-1",
+      reason: "leak returned",
+    });
+  });
+
+  it("verifyWorkItem sends the verifier and omits absent notes", async () => {
+    const { hass, calls } = fakeHass();
+    const api = new BoatApi(hass);
+    await api.verifyWorkItem("wi-1", "crew-1");
+    expect(calls[0]).toEqual({
+      type: "boat_management/verify_work_item",
+      work_item_id: "wi-1",
+      verified_by: "crew-1",
+    });
+    await api.verifyWorkItem("wi-1", "crew-1", "looks good");
+    expect(calls[1]).toEqual({
+      type: "boat_management/verify_work_item",
+      work_item_id: "wi-1",
+      verified_by: "crew-1",
+      notes: "looks good",
+    });
+  });
+});

@@ -9,6 +9,7 @@ import type {
   InventoryRecord,
   MaintenanceLogRecord,
   SystemRecord,
+  WorkItemRecord,
 } from "../src/types";
 
 export function systemRecord(over: Partial<SystemRecord> = {}): SystemRecord {
@@ -117,6 +118,36 @@ export function logRecord(
     completed_at_local: "2024-05-01 11:00",
     timezone_at_completion: "Europe/London",
     notes: null,
+    ...over,
+  };
+}
+
+export function workItemRecord(
+  over: Partial<WorkItemRecord> = {},
+): WorkItemRecord {
+  return {
+    id: "wi-1",
+    catalogue_task_id: "task-1",
+    status: "todo",
+    trigger_source: "manual",
+    trigger_key: null,
+    operational_context_id: null,
+    title: "Service raw-water pump",
+    assigned_to: null,
+    due_date: null,
+    created_at_utc: "2024-05-01T09:00:00+00:00",
+    started_at_utc: null,
+    finished_at_utc: null,
+    submitted_for_review_at_utc: null,
+    verified_by: null,
+    verified_at_utc: null,
+    timezone_at_creation: "Europe/London",
+    timezone_at_completion: null,
+    completion_notes: null,
+    block_reason: null,
+    evidence_refs: [],
+    inventory_used: [],
+    meter_readings: {},
     ...over,
   };
 }

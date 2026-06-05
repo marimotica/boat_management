@@ -9,8 +9,10 @@ import type {
   EquipmentRecord,
   HomeAssistant,
   InventoryRecord,
+  MaintenanceLogRecord,
   SystemRecord,
   UnsubscribeFunc,
+  WorkItemRecord,
 } from "./types";
 
 export interface EquipmentDraftFields {
@@ -52,6 +54,16 @@ export interface CatalogueDraftFields {
   equipment_refs?: string[];
   inventory_refs?: string[];
   required_skills?: string[];
+}
+
+export interface WorkItemDraftFields {
+  catalogue_task_id: string;
+  title?: string;
+  assigned_to?: string;
+  due_date?: string;
+  trigger_source?: string;
+  trigger_key?: string;
+  operational_context_id?: string;
 }
 
 export class BoatApi {
@@ -193,6 +205,107 @@ export class BoatApi {
     return this.hass.callWS<CatalogueTaskRecord>({
       type: "boat_management/archive_catalogue_task",
       catalogue_task_id,
+    });
+  }
+
+  // --- Work items ----------------------------------------------------------
+  // A work item is always instantiated from a known catalogue task (operational
+  // events instantiate known tasks; they never invent arbitrary work). Every
+  // lifecycle method returns the full record so the shell can reconcile; verify
+  // is special and returns the immutable maintenance log entry it created.
+  createWorkItem(fields: WorkItemDraftFields): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/create_work_item",
+      ...prune(fields),
+    });
+  }
+
+  claimWorkItem(work_item_id: string, crew_id: string): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/claim_work_item",
+      work_item_id,
+      crew_id,
+    });
+  }
+
+  startWorkItem(work_item_id: string): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/start_work_item",
+      work_item_id,
+    });
+  }
+
+  submitForReview(
+    work_item_id: string,
+    completion_notes?: string,
+  ): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/submit_for_review",
+      ...prune({ work_item_id, completion_notes }),
+    });
+  }
+
+  blockWorkItem(
+    work_item_id: string,
+    block_reason?: string,
+  ): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/block_work_item",
+      ...prune({ work_item_id, block_reason }),
+    });
+  }
+
+  deferWorkItem(work_item_id: string, reason?: string): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/defer_work_item",
+      ...prune({ work_item_id, reason }),
+    });
+  }
+
+  cancelWorkItem(
+    work_item_id: string,
+    reason?: string,
+  ): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/cancel_work_item",
+      ...prune({ work_item_id, reason }),
+    });
+  }
+
+  // Move a blocked/deferred item back into the active flow (todo by default,
+  // or in_progress to resume). The transition is still validated server-side.
+  unblockWorkItem(
+    work_item_id: string,
+    target?: string,
+  ): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/unblock_work_item",
+      ...prune({ work_item_id, target }),
+    });
+  }
+
+  // Reopen never deletes history: the backend creates a NEW corrective work
+  // item (returned here) and leaves the original done item and its log entry.
+  reopenWorkItem(
+    work_item_id: string,
+    reason?: string,
+  ): Promise<WorkItemRecord> {
+    return this.hass.callWS<WorkItemRecord>({
+      type: "boat_management/reopen_work_item",
+      ...prune({ work_item_id, reason }),
+    });
+  }
+
+  // Verification (review -> done) creates an immutable maintenance log entry,
+  // which is what the command returns (not the work item).
+  verifyWorkItem(
+    work_item_id: string,
+    verified_by: string,
+    notes?: string,
+  ): Promise<MaintenanceLogRecord> {
+    return this.hass.callWS<MaintenanceLogRecord>({
+      type: "boat_management/verify_work_item",
+      ...prune({ work_item_id, verified_by, notes }),
     });
   }
 }

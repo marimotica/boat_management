@@ -129,6 +129,42 @@ export interface VesselRecord {
   default_timezone?: string | null;
 }
 
+// A quantity of an inventory item consumed by work. Mirrors InventoryUsage;
+// quantity is a string to preserve Decimal precision.
+export interface InventoryUsageRecord {
+  inventory_id: string;
+  quantity: string;
+}
+
+// An instantiated unit of work. Mirrors WorkItem.to_dict(). The `status` is one
+// of WorkItemStatus; `assigned_to`/`verified_by` reference crew by stable id.
+// Active work lives on the board; verification turns it into an immutable log
+// entry (the backend remains the source of truth for lifecycle rules).
+export interface WorkItemRecord {
+  id: string;
+  catalogue_task_id: string;
+  status: string;
+  trigger_source: string;
+  trigger_key?: string | null;
+  operational_context_id?: string | null;
+  title?: string | null;
+  assigned_to?: string | null;
+  due_date?: string | null;
+  created_at_utc?: string | null;
+  started_at_utc?: string | null;
+  finished_at_utc?: string | null;
+  submitted_for_review_at_utc?: string | null;
+  verified_by?: string | null;
+  verified_at_utc?: string | null;
+  timezone_at_creation: string;
+  timezone_at_completion?: string | null;
+  completion_notes?: string | null;
+  block_reason?: string | null;
+  evidence_refs: string[];
+  inventory_used: InventoryUsageRecord[];
+  meter_readings: Record<string, unknown>;
+}
+
 export type RecordMap<T> = Record<string, T>;
 
 // Derived (not a backend record): a compact summary of the most recent verified
@@ -152,7 +188,7 @@ export interface BootstrapResult {
     equipment: RecordMap<EquipmentRecord>;
     inventory: RecordMap<InventoryRecord>;
     task_catalogue: RecordMap<CatalogueTaskRecord>;
-    work_items: RecordMap<Record<string, unknown>>;
+    work_items: RecordMap<WorkItemRecord>;
     maintenance_log: RecordMap<MaintenanceLogRecord>;
     crew: RecordMap<CrewRecord>;
   };

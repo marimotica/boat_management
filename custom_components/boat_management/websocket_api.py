@@ -23,8 +23,10 @@ import voluptuous as vol
 from . import (
     equipment as equipment_ops,
     inventory as inventory_ops,
+    logbook as logbook_ops,
     systems as systems_ops,
     task_catalogue as catalogue_ops,
+    work_items as work_items_ops,
 )
 from .const import DOMAIN, STORAGE_VERSION
 from .coordinator import BoatCoordinator
@@ -549,6 +551,117 @@ _WRITE_SPECS: tuple[tuple[str, dict[Any, Any], Callable[..., Any], Any], ...] = 
         {vol.Required("catalogue_task_id"): str},
         catalogue_ops.archive_catalogue_task,
         lambda m: {"catalogue_task_id": m["catalogue_task_id"]},
+    ),
+    # Work items -----------------------------------------------------------
+    # Instantiated from a known catalogue task; lifecycle changes go through
+    # the transitions matrix in the domain ops. Verification (review -> done)
+    # is the only path that writes immutable history, so it returns a log
+    # entry instead of the work item.
+    (
+        "boat_management/create_work_item",
+        {
+            vol.Required("catalogue_task_id"): str,
+            vol.Optional("trigger_source"): str,
+            vol.Optional("trigger_key"): str,
+            vol.Optional("operational_context_id"): str,
+            vol.Optional("title"): str,
+            vol.Optional("assigned_to"): str,
+            vol.Optional("due_date"): str,
+        },
+        work_items_ops.create_work_item,
+        lambda m: _pick(
+            m,
+            (
+                "catalogue_task_id",
+                "trigger_source",
+                "trigger_key",
+                "operational_context_id",
+                "title",
+                "assigned_to",
+                "due_date",
+            ),
+        ),
+    ),
+    (
+        "boat_management/claim_work_item",
+        {vol.Required("work_item_id"): str, vol.Required("crew_id"): str},
+        work_items_ops.claim_work_item,
+        lambda m: {"work_item_id": m["work_item_id"], "crew_id": m["crew_id"]},
+    ),
+    (
+        "boat_management/start_work_item",
+        {vol.Required("work_item_id"): str},
+        work_items_ops.start_work_item,
+        lambda m: {"work_item_id": m["work_item_id"]},
+    ),
+    (
+        "boat_management/submit_for_review",
+        {
+            vol.Required("work_item_id"): str,
+            vol.Optional("completion_notes"): str,
+            vol.Optional("evidence_refs"): [str],
+            vol.Optional("inventory_used"): [dict],
+            vol.Optional("meter_readings"): dict,
+        },
+        work_items_ops.submit_for_review,
+        lambda m: _pick(
+            m,
+            (
+                "work_item_id",
+                "completion_notes",
+                "evidence_refs",
+                "inventory_used",
+                "meter_readings",
+            ),
+        ),
+    ),
+    (
+        "boat_management/block_work_item",
+        {vol.Required("work_item_id"): str, vol.Optional("block_reason"): str},
+        work_items_ops.block_work_item,
+        lambda m: _pick(m, ("work_item_id", "block_reason")),
+    ),
+    (
+        "boat_management/defer_work_item",
+        {vol.Required("work_item_id"): str, vol.Optional("reason"): str},
+        work_items_ops.defer_work_item,
+        lambda m: _pick(m, ("work_item_id", "reason")),
+    ),
+    (
+        "boat_management/cancel_work_item",
+        {vol.Required("work_item_id"): str, vol.Optional("reason"): str},
+        work_items_ops.cancel_work_item,
+        lambda m: _pick(m, ("work_item_id", "reason")),
+    ),
+    # No corresponding service: the panel needs a way out of blocked/deferred
+    # (back to todo or in_progress). The transition is still validated by the
+    # matrix in the domain op.
+    (
+        "boat_management/unblock_work_item",
+        {vol.Required("work_item_id"): str, vol.Optional("target"): str},
+        work_items_ops.unblock_work_item,
+        lambda m: _pick(m, ("work_item_id", "target")),
+    ),
+    (
+        "boat_management/reopen_work_item",
+        {vol.Required("work_item_id"): str, vol.Optional("reason"): str},
+        work_items_ops.reopen_work_item,
+        lambda m: _pick(m, ("work_item_id", "reason")),
+    ),
+    # Verification: review -> done. Returns the immutable maintenance log entry
+    # (not the work item) so the panel can reflect new history immediately.
+    (
+        "boat_management/verify_work_item",
+        {
+            vol.Required("work_item_id"): str,
+            vol.Required("verified_by"): str,
+            vol.Optional("consume_inventory"): bool,
+            vol.Optional("notes"): str,
+        },
+        logbook_ops.verify_work_item,
+        lambda m: _pick(
+            m, ("work_item_id", "verified_by", "consume_inventory", "notes")
+        ),
     ),
 )
 

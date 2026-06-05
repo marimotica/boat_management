@@ -10,11 +10,14 @@ import "./inventory-view";
 import "./inventory-sheet";
 import "./catalogue-view";
 import "./catalogue-sheet";
+import "./work-board-view";
+import "./work-item-sheet";
 import { isLowStock } from "./inventory-view";
 import type { SystemDraft } from "./system-sheet";
 import type { EquipmentDraft } from "./equipment-sheet";
 import type { InventoryDraft, InventoryAdjust } from "./inventory-sheet";
 import type { CatalogueDraft } from "./catalogue-sheet";
+import type { WorkAction } from "./work-item-sheet";
 import type { MultiselectOption } from "./multiselect";
 import {
   isWsError,
@@ -29,9 +32,10 @@ import {
   type SystemRecord,
   type UnsubscribeFunc,
   type VesselRecord,
+  type WorkItemRecord,
 } from "./types";
 
-type Tab = "systems" | "equipment" | "inventory" | "tasks" | "log";
+type Tab = "systems" | "equipment" | "inventory" | "tasks" | "work" | "log";
 type ListTab = "systems" | "equipment" | "inventory" | "tasks";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -39,6 +43,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "equipment", label: "Equipment" },
   { id: "inventory", label: "Inventory" },
   { id: "tasks", label: "Tasks" },
+  { id: "work", label: "Work" },
   { id: "log", label: "Log" },
 ];
 
@@ -175,6 +180,7 @@ export class BoatManagementPanel extends LitElement {
   @state() private _catalogue: CatalogueTaskRecord[] = [];
   @state() private _crew: CrewRecord[] = [];
   @state() private _log: MaintenanceLogRecord[] = [];
+  @state() private _work: WorkItemRecord[] = [];
   @state() private _counts: Record<string, number> = {};
   @state() private _tab: Tab = "systems";
   @state() private _query = "";
@@ -182,13 +188,15 @@ export class BoatManagementPanel extends LitElement {
   @state() private _error: string | null = null;
 
   // One sheet open at a time, keyed by the entity it edits. `_sheetRecord` is
-  // null in create mode and the target record in edit mode.
-  @state() private _sheet: ListTab | null = null;
+  // null in create mode and the target record in edit mode. The work sheet is a
+  // lifecycle surface rather than a list editor, so it joins the same machinery.
+  @state() private _sheet: ListTab | "work" | null = null;
   @state() private _sheetRecord:
     | SystemRecord
     | EquipmentRecord
     | InventoryRecord
     | CatalogueTaskRecord
+    | WorkItemRecord
     | null = null;
   @state() private _saving = false;
   @state() private _sheetError: string | null = null;
@@ -238,6 +246,7 @@ export class BoatManagementPanel extends LitElement {
       this._catalogue = Object.values(data.collections.task_catalogue);
       this._crew = Object.values(data.collections.crew);
       this._log = Object.values(data.collections.maintenance_log);
+      this._work = Object.values(data.collections.work_items);
       this._error = null;
     } catch (err) {
       this._error = describe(err);
@@ -249,6 +258,9 @@ export class BoatManagementPanel extends LitElement {
   // --- Rendering -----------------------------------------------------------
   override render() {
     const isList = LIST_TABS.has(this._tab);
+    // The work board is not a searchable list, but it still instantiates work
+    // via the FAB (create from a catalogue task).
+    const showFab = (isList || this._tab === "work") && !this._loading;
     return html`
       <header>
         <div class="title ellipsis">${this._vessel?.name ?? "Boat"}</div>
@@ -280,7 +292,7 @@ export class BoatManagementPanel extends LitElement {
           : this._renderTab()}
       </main>
 
-      ${isList && !this._loading
+      ${showFab
         ? html`<button class="fab" title="Add" @click=${this._openCreate}>
             +
           </button>`
@@ -326,6 +338,12 @@ export class BoatManagementPanel extends LitElement {
           .lastCompleted=${this._lastCompletedMap()}
           @bm-edit=${this._onEditTask}
         ></boat-catalogue-view>`;
+      case "work":
+        return html`<boat-work-board-view
+          .items=${this._workForBoard()}
+          .crewNames=${this._crewNames()}
+          @bm-edit=${this._onEditWork}
+        ></boat-work-board-view>`;
       default: {
         const count = this._counts[this._tabCollection()] ?? 0;
         const label = TABS.find((t) => t.id === this._tab)!.label;
@@ -385,6 +403,20 @@ export class BoatManagementPanel extends LitElement {
           @bm-archive=${this._onCatalogueArchive}
           @bm-close=${this._closeSheet}
         ></boat-catalogue-sheet>`;
+      case "work":
+        return html`<boat-work-item-sheet
+          .item=${this._sheetRecord as WorkItemRecord | null}
+          .taskOptions=${this._taskOptions()}
+          .crew=${this._crewOptions()}
+          .verifiers=${this._verifierOptions()}
+          .defaultVerifier=${this._defaultVerifierFor(
+            this._sheetRecord as WorkItemRecord | null,
+          )}
+          .saving=${this._saving}
+          .error=${this._sheetError}
+          @bm-action=${this._onWorkAction}
+          @bm-close=${this._closeSheet}
+        ></boat-work-item-sheet>`;
       default:
         return nothing;
     }
@@ -478,6 +510,44 @@ export class BoatManagementPanel extends LitElement {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  // Active crew as plain {id,name} for assignment/claim pickers.
+  private _crewOptions(): MultiselectOption[] {
+    return this._crew
+      .filter((c) => c.active)
+      .map((c) => ({ id: c.id, name: c.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Active catalogue tasks for the create picker: work is only ever instantiated
+  // from a known task (never invented), so the picker is the catalogue.
+  private _taskOptions(): MultiselectOption[] {
+    return this._catalogue
+      .filter((t) => t.active)
+      .map((t) => ({ id: t.id, name: t.title }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Stable board order: dated work first (soonest due first), then undated by
+  // creation order, so the board does not reshuffle between refreshes.
+  private _workForBoard(): WorkItemRecord[] {
+    return [...this._work].sort((a, b) => {
+      const ad = a.due_date ?? "";
+      const bd = b.due_date ?? "";
+      if (ad && bd && ad !== bd) return ad.localeCompare(bd);
+      if (ad && !bd) return -1;
+      if (!ad && bd) return 1;
+      return (a.created_at_utc ?? "").localeCompare(b.created_at_utc ?? "");
+    });
+  }
+
+  // The catalogue task's default verifier, used to pre-select the verifier on
+  // review (the backend still enforces the verifier's role at verify time).
+  private _defaultVerifierFor(item: WorkItemRecord | null): string | null {
+    if (!item) return null;
+    const task = this._catalogue.find((t) => t.id === item.catalogue_task_id);
+    return task?.default_verifier ?? null;
+  }
+
   // Most recent verified completion for a task, resolved from the immutable log.
   private _lastCompletedFor(
     task: CatalogueTaskRecord | null,
@@ -541,10 +611,11 @@ export class BoatManagementPanel extends LitElement {
   }
 
   private _openCreate(): void {
-    if (!LIST_TABS.has(this._tab)) return;
+    // List tabs create their entity; the work board instantiates a work item.
+    if (!LIST_TABS.has(this._tab) && this._tab !== "work") return;
     this._sheetRecord = null;
     this._sheetError = null;
-    this._sheet = this._tab as ListTab;
+    this._sheet = this._tab as ListTab | "work";
   }
 
   private _onEditSystem(e: CustomEvent<SystemRecord>): void {
@@ -563,13 +634,18 @@ export class BoatManagementPanel extends LitElement {
     this._open("tasks", e.detail);
   }
 
+  private _onEditWork(e: CustomEvent<WorkItemRecord>): void {
+    this._open("work", e.detail);
+  }
+
   private _open(
-    sheet: ListTab,
+    sheet: ListTab | "work",
     record:
       | SystemRecord
       | EquipmentRecord
       | InventoryRecord
-      | CatalogueTaskRecord,
+      | CatalogueTaskRecord
+      | WorkItemRecord,
   ): void {
     this._sheetRecord = record;
     this._sheetError = null;
@@ -757,6 +833,56 @@ export class BoatManagementPanel extends LitElement {
 
   private _onCatalogueArchive(e: CustomEvent<string>): void {
     void this._run(() => this._api!.archiveCatalogueTask(e.detail));
+  }
+
+  // --- Work item writes ----------------------------------------------------
+  // One discriminated event covers the whole lifecycle: map each intent onto its
+  // command and run it through the single mutation path (write, refresh, close).
+  // The backend validates every transition, role, and reference; this only maps.
+  private _onWorkAction(e: CustomEvent<WorkAction>): void {
+    const a = e.detail;
+    const api = this._api!;
+    switch (a.kind) {
+      case "create":
+        void this._run(() =>
+          api.createWorkItem({
+            catalogue_task_id: a.catalogue_task_id,
+            title: a.title,
+            assigned_to: a.assigned_to,
+            due_date: a.due_date,
+          }),
+        );
+        return;
+      case "claim":
+        void this._run(() => api.claimWorkItem(a.id, a.crew_id));
+        return;
+      case "start":
+        void this._run(() => api.startWorkItem(a.id));
+        return;
+      case "submit":
+        void this._run(() => api.submitForReview(a.id, a.completion_notes));
+        return;
+      case "block":
+        void this._run(() => api.blockWorkItem(a.id, a.block_reason));
+        return;
+      case "defer":
+        void this._run(() => api.deferWorkItem(a.id, a.reason));
+        return;
+      case "cancel":
+        void this._run(() => api.cancelWorkItem(a.id, a.reason));
+        return;
+      case "unblock":
+        void this._run(() => api.unblockWorkItem(a.id, a.target));
+        return;
+      case "reopen":
+        void this._run(() => api.reopenWorkItem(a.id, a.reason));
+        return;
+      case "verify":
+        void this._run(() =>
+          api.verifyWorkItem(a.id, a.verified_by, a.notes),
+        );
+        return;
+    }
   }
 }
 

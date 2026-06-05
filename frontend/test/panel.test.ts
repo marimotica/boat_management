@@ -7,8 +7,9 @@ import type {
   HomeAssistant,
   MaintenanceLogRecord,
   SystemRecord,
+  WorkItemRecord,
 } from "../src/types";
-import { mount, update, waitFor } from "./helpers";
+import { mount, update, waitFor, workItemRecord } from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -84,6 +85,21 @@ function fakeBackend(options: { failOn?: string } = {}) {
     },
   };
 
+  // Active work: one fresh todo (start it) and one awaiting review (verify it).
+  const workItems: Record<string, WorkItemRecord> = {
+    "wi-todo": workItemRecord({
+      id: "wi-todo",
+      status: "todo",
+      title: "Seeded todo",
+    }),
+    "wi-review": workItemRecord({
+      id: "wi-review",
+      status: "review",
+      title: "Seeded review",
+      assigned_to: "crew-1",
+    }),
+  };
+
   const bootstrap = (): BootstrapResult => ({
     entry_id: "entry-1",
     vessel: {
@@ -100,7 +116,7 @@ function fakeBackend(options: { failOn?: string } = {}) {
       equipment: {},
       inventory: {},
       task_catalogue: { ...tasks },
-      work_items: {},
+      work_items: { ...workItems },
       maintenance_log: { ...log },
       crew: { ...crew },
     },
@@ -172,6 +188,43 @@ function fakeBackend(options: { failOn?: string } = {}) {
           tasks[msg.catalogue_task_id as string].active = false;
           return tasks[msg.catalogue_task_id as string];
         }
+        case "boat_management/create_work_item": {
+          const id = `wi-${seq++}`;
+          workItems[id] = workItemRecord({
+            id,
+            catalogue_task_id: msg.catalogue_task_id as string,
+            title: (msg.title as string) ?? null,
+            assigned_to: (msg.assigned_to as string) ?? null,
+            due_date: (msg.due_date as string) ?? null,
+            status: "todo",
+          });
+          return workItems[id];
+        }
+        case "boat_management/start_work_item": {
+          const target = workItems[msg.work_item_id as string];
+          target.status = "in_progress";
+          return target;
+        }
+        case "boat_management/verify_work_item": {
+          // Verification (review -> done) creates an immutable log entry, which
+          // is what the command returns (not the work item).
+          const target = workItems[msg.work_item_id as string];
+          target.status = "done";
+          target.verified_by = msg.verified_by as string;
+          const id = `log-${seq++}`;
+          log[id] = {
+            id,
+            catalogue_task_id: target.catalogue_task_id,
+            work_item_id: target.id,
+            verified_by: msg.verified_by as string,
+            completed_by: target.assigned_to ?? null,
+            completed_at_utc: "2024-05-02T10:00:00+00:00",
+            completed_at_local: "2024-05-02 11:00",
+            timezone_at_completion: "Europe/London",
+            notes: (msg.notes as string) ?? null,
+          };
+          return log[id];
+        }
         default:
           throw new Error(`unexpected command ${type}`);
       }
@@ -181,7 +234,7 @@ function fakeBackend(options: { failOn?: string } = {}) {
     },
   } as unknown as HomeAssistant;
 
-  return { hass, calls, systems, tasks };
+  return { hass, calls, systems, tasks, workItems, log };
 }
 
 async function mountPanel(hass: HomeAssistant) {
@@ -434,5 +487,145 @@ describe("<boat-management-panel> catalogue", () => {
       calls.some((c) => c.type === "boat_management/archive_catalogue_task"),
     ).toBe(true);
     expect(tasks["task-1"].active).toBe(false);
+  });
+});
+
+describe("<boat-management-panel> work", () => {
+  function board(panel: HTMLElement) {
+    return panel.shadowRoot!.querySelector("boat-work-board-view")!;
+  }
+  function cardsIn(panel: HTMLElement, status: string): HTMLElement[] {
+    return [
+      ...board(panel).shadowRoot!.querySelectorAll<HTMLElement>(
+        `.col[data-status="${status}"] .card`,
+      ),
+    ];
+  }
+  async function openWork(panel: BoatManagementPanel) {
+    const tab = [
+      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
+    ].find((b) => b.textContent!.includes("Work"))!;
+    tab.click();
+    await update(panel);
+  }
+
+  it("renders the board with seeded work grouped by status", async () => {
+    const { hass } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openWork(panel);
+    const todoCol = board(panel).shadowRoot!.querySelector(
+      '.col[data-status="todo"]',
+    )!;
+    const reviewCol = board(panel).shadowRoot!.querySelector(
+      '.col[data-status="review"]',
+    )!;
+    expect(todoCol.textContent).toContain("Seeded todo");
+    expect(reviewCol.textContent).toContain("Seeded review");
+  });
+
+  it("instantiates a work item from the FAB and shows it on the board", async () => {
+    const { hass, calls, workItems } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openWork(panel);
+
+    panel.shadowRoot!.querySelector<HTMLButtonElement>(".fab")!.click();
+    await waitFor(
+      () => !!panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    const sheet = panel.shadowRoot!.querySelector("boat-work-item-sheet")!;
+    await update(sheet as HTMLElement);
+
+    const task = sheet.shadowRoot!.querySelector<HTMLSelectElement>("#task")!;
+    task.value = "task-1";
+    task.dispatchEvent(new Event("change"));
+    const title = sheet.shadowRoot!.querySelector<HTMLInputElement>("#title")!;
+    title.value = "New job";
+    title.dispatchEvent(new InputEvent("input"));
+    await update(sheet as HTMLElement);
+    sheet.shadowRoot!
+      .querySelector<HTMLButtonElement>('[data-action="create"]')!
+      .click();
+
+    await waitFor(
+      () => !panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    const createCall = calls.find(
+      (c) => c.type === "boat_management/create_work_item",
+    );
+    // The panel never invents the id; create omits it and trusts the server.
+    expect(createCall).toMatchObject({
+      catalogue_task_id: "task-1",
+      title: "New job",
+    });
+    expect(createCall).not.toHaveProperty("id");
+    expect(Object.values(workItems).some((w) => w.title === "New job")).toBe(
+      true,
+    );
+    expect(board(panel).shadowRoot!.textContent).toContain("New job");
+  });
+
+  it("starts a todo item through the lifecycle sheet", async () => {
+    const { hass, calls } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openWork(panel);
+
+    cardsIn(panel, "todo")[0].click();
+    await waitFor(
+      () => !!panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    const sheet = panel.shadowRoot!.querySelector("boat-work-item-sheet")!;
+    await update(sheet as HTMLElement);
+    sheet.shadowRoot!
+      .querySelector<HTMLButtonElement>('[data-action="start"]')!
+      .click();
+
+    await waitFor(
+      () => !panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    expect(
+      calls.some(
+        (c) =>
+          c.type === "boat_management/start_work_item" &&
+          c.work_item_id === "wi-todo",
+      ),
+    ).toBe(true);
+    expect(
+      cardsIn(panel, "in_progress")
+        .map((c) => c.textContent)
+        .join(" "),
+    ).toContain("Seeded todo");
+  });
+
+  it("verifies a review item, creating an immutable log entry", async () => {
+    const { hass, calls, workItems, log } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openWork(panel);
+
+    cardsIn(panel, "review")[0].click();
+    await waitFor(
+      () => !!panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    const sheet = panel.shadowRoot!.querySelector("boat-work-item-sheet")!;
+    await update(sheet as HTMLElement);
+    // The catalogue default verifier (crew-1) is pre-selected, so Verify is ready.
+    const verify = sheet.shadowRoot!.querySelector<HTMLButtonElement>(
+      '[data-action="verify"]',
+    )!;
+    expect(verify.disabled).toBe(false);
+    verify.click();
+
+    await waitFor(
+      () => !panel.shadowRoot!.querySelector("boat-work-item-sheet"),
+    );
+    const verifyCall = calls.find(
+      (c) => c.type === "boat_management/verify_work_item",
+    );
+    expect(verifyCall).toMatchObject({
+      work_item_id: "wi-review",
+      verified_by: "crew-1",
+    });
+    expect(workItems["wi-review"].status).toBe("done");
+    // A new immutable log entry was appended (seeded log-1 plus the new one).
+    expect(Object.keys(log).length).toBe(2);
   });
 });
