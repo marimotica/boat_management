@@ -180,3 +180,67 @@ describe("BoatApi inventory", () => {
     });
   });
 });
+
+describe("BoatApi catalogue", () => {
+  it("createCatalogueTask drops blanks and empty arrays, keeps the title", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).createCatalogueTask({
+      title: "Service raw-water pump",
+      description: "",
+      procedure: undefined,
+      system_refs: [],
+      required_skills: ["mechanical"],
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/create_catalogue_task",
+      title: "Service raw-water pump",
+      required_skills: ["mechanical"],
+    });
+  });
+
+  it("createCatalogueTask keeps a populated numeric duration and refs", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).createCatalogueTask({
+      title: "Service raw-water pump",
+      estimated_duration_minutes: 45,
+      default_verifier: "crew-1",
+      system_refs: ["sys-1"],
+      equipment_refs: ["eq-1"],
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/create_catalogue_task",
+      title: "Service raw-water pump",
+      estimated_duration_minutes: 45,
+      default_verifier: "crew-1",
+      system_refs: ["sys-1"],
+      equipment_refs: ["eq-1"],
+    });
+  });
+
+  it("updateCatalogueTask passes the changes dict through verbatim (nulls/empties preserved)", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).updateCatalogueTask("task-9", {
+      title: "Service raw-water pump",
+      default_verifier: null,
+      required_skills: [],
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/update_catalogue_task",
+      catalogue_task_id: "task-9",
+      changes: {
+        title: "Service raw-water pump",
+        default_verifier: null,
+        required_skills: [],
+      },
+    });
+  });
+
+  it("archiveCatalogueTask references the id only", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).archiveCatalogueTask("task-9");
+    expect(calls[0]).toEqual({
+      type: "boat_management/archive_catalogue_task",
+      catalogue_task_id: "task-9",
+    });
+  });
+});

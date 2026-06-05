@@ -4,6 +4,7 @@
 // optimistic reconciliation.
 import type {
   BootstrapResult,
+  CatalogueTaskRecord,
   ChangeEvent,
   EquipmentRecord,
   HomeAssistant,
@@ -38,6 +39,19 @@ export interface InventoryDraftFields {
   reorder_level?: string;
   expiry_date?: string;
   equipment_refs?: string[];
+}
+
+export interface CatalogueDraftFields {
+  title: string;
+  description?: string;
+  procedure?: string;
+  safety_notes?: string;
+  estimated_duration_minutes?: number;
+  default_verifier?: string;
+  system_refs?: string[];
+  equipment_refs?: string[];
+  inventory_refs?: string[];
+  required_skills?: string[];
 }
 
 export class BoatApi {
@@ -151,6 +165,34 @@ export class BoatApi {
     return this.hass.callWS<InventoryRecord>({
       type: "boat_management/mark_inventory_expired",
       inventory_id,
+    });
+  }
+
+  // --- Task catalogue ------------------------------------------------------
+  createCatalogueTask(
+    fields: CatalogueDraftFields,
+  ): Promise<CatalogueTaskRecord> {
+    return this.hass.callWS<CatalogueTaskRecord>({
+      type: "boat_management/create_catalogue_task",
+      ...prune(fields),
+    });
+  }
+
+  updateCatalogueTask(
+    catalogue_task_id: string,
+    changes: Record<string, unknown>,
+  ): Promise<CatalogueTaskRecord> {
+    return this.hass.callWS<CatalogueTaskRecord>({
+      type: "boat_management/update_catalogue_task",
+      catalogue_task_id,
+      changes,
+    });
+  }
+
+  archiveCatalogueTask(catalogue_task_id: string): Promise<CatalogueTaskRecord> {
+    return this.hass.callWS<CatalogueTaskRecord>({
+      type: "boat_management/archive_catalogue_task",
+      catalogue_task_id,
     });
   }
 }

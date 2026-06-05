@@ -2,7 +2,9 @@ import { describe, it, expect, afterEach } from "vitest";
 import { BoatSystemsView } from "../src/systems-view";
 import { BoatEquipmentView } from "../src/equipment-view";
 import { BoatInventoryView } from "../src/inventory-view";
+import { BoatCatalogueView } from "../src/catalogue-view";
 import {
+  catalogueRecord,
   equipmentRecord,
   inventoryRecord,
   mount,
@@ -10,6 +12,7 @@ import {
   systemRecord,
 } from "./helpers";
 import type {
+  CatalogueTaskRecord,
   EquipmentRecord,
   InventoryRecord,
   SystemRecord,
@@ -114,6 +117,62 @@ describe("<boat-inventory-view>", () => {
     const target = inventoryRecord({ id: "i9", name: "Zinc anode" });
     const el = await mount<BoatInventoryView>("boat-inventory-view", { inventory: [target] });
     const event = nextEvent<InventoryRecord>(el, "bm-edit");
+    el.shadowRoot!.querySelector<HTMLLIElement>("li")!.click();
+    expect((await event).detail).toBe(target);
+  });
+});
+
+describe("<boat-catalogue-view>", () => {
+  it("shows an empty state with no tasks", async () => {
+    const el = await mount<BoatCatalogueView>("boat-catalogue-view", {
+      tasks: [],
+    });
+    expect(el.shadowRoot!.querySelector(".empty")).not.toBeNull();
+    expect(el.shadowRoot!.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  it("renders title, resolved systems, duration and skill chips", async () => {
+    const el = await mount<BoatCatalogueView>("boat-catalogue-view", {
+      tasks: [
+        catalogueRecord({
+          id: "t1",
+          title: "Service raw-water pump",
+          system_refs: ["s1"],
+          estimated_duration_minutes: 45,
+          required_skills: ["mechanical"],
+        }),
+      ],
+      systemNames: { s1: "Propulsion" },
+    });
+    const row = el.shadowRoot!.querySelector("li")!;
+    expect(row.textContent).toContain("Service raw-water pump");
+    expect(row.textContent).toContain("Propulsion");
+    expect(row.textContent).toContain("45 min");
+    expect(row.querySelector(".chip")!.textContent).toContain("mechanical");
+  });
+
+  it("shows the resolved last-completed summary, or Never completed", async () => {
+    const el = await mount<BoatCatalogueView>("boat-catalogue-view", {
+      tasks: [
+        catalogueRecord({ id: "t1", title: "Done one" }),
+        catalogueRecord({ id: "t2", title: "Fresh one" }),
+      ],
+      lastCompleted: {
+        t1: { date: "2024-05-01 11:00", verifierName: "Sam", notes: null },
+      },
+    });
+    const rows = el.shadowRoot!.querySelectorAll("li");
+    expect(rows[0].textContent).toContain("Last done 2024-05-01 11:00");
+    expect(rows[0].textContent).toContain("Sam");
+    expect(rows[1].textContent).toContain("Never completed");
+  });
+
+  it("emits bm-edit with the tapped record", async () => {
+    const target = catalogueRecord({ id: "t9", title: "Inspect windlass" });
+    const el = await mount<BoatCatalogueView>("boat-catalogue-view", {
+      tasks: [target],
+    });
+    const event = nextEvent<CatalogueTaskRecord>(el, "bm-edit");
     el.shadowRoot!.querySelector<HTMLLIElement>("li")!.click();
     expect((await event).detail).toBe(target);
   });

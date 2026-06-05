@@ -2,9 +2,12 @@
 // fully-populated serialized records (mirroring the backend `to_dict()` shape)
 // so individual tests only override the fields they care about.
 import type {
+  CatalogueTaskRecord,
+  CrewRecord,
   EquipmentRecord,
   HomeAssistant,
   InventoryRecord,
+  MaintenanceLogRecord,
   SystemRecord,
 } from "../src/types";
 
@@ -63,6 +66,57 @@ export function inventoryRecord(
     expiry_date: null,
     expired: false,
     active: true,
+    ...over,
+  };
+}
+
+export function catalogueRecord(
+  over: Partial<CatalogueTaskRecord> = {},
+): CatalogueTaskRecord {
+  return {
+    id: "task-1",
+    title: "Service raw-water pump",
+    description: null,
+    system_refs: [],
+    equipment_refs: [],
+    inventory_refs: [],
+    required_skills: [],
+    estimated_duration_minutes: null,
+    procedure: null,
+    safety_notes: null,
+    default_verifier: null,
+    trigger_rules: [],
+    last_completed_at_utc: null,
+    active: true,
+    owner_curated: true,
+    ...over,
+  };
+}
+
+export function crewRecord(over: Partial<CrewRecord> = {}): CrewRecord {
+  return {
+    id: "crew-1",
+    name: "Sam",
+    role: "skipper",
+    skills: [],
+    active: true,
+    ...over,
+  };
+}
+
+export function logRecord(
+  over: Partial<MaintenanceLogRecord> = {},
+): MaintenanceLogRecord {
+  return {
+    id: "log-1",
+    catalogue_task_id: "task-1",
+    work_item_id: "wi-1",
+    verified_by: "crew-1",
+    completed_by: "crew-1",
+    completed_at_utc: "2024-05-01T10:00:00+00:00",
+    completed_at_local: "2024-05-01 11:00",
+    timezone_at_completion: "Europe/London",
+    notes: null,
     ...over,
   };
 }

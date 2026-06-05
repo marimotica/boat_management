@@ -8,16 +8,23 @@ import "./equipment-view";
 import "./equipment-sheet";
 import "./inventory-view";
 import "./inventory-sheet";
+import "./catalogue-view";
+import "./catalogue-sheet";
 import { isLowStock } from "./inventory-view";
 import type { SystemDraft } from "./system-sheet";
 import type { EquipmentDraft } from "./equipment-sheet";
 import type { InventoryDraft, InventoryAdjust } from "./inventory-sheet";
+import type { CatalogueDraft } from "./catalogue-sheet";
 import type { MultiselectOption } from "./multiselect";
 import {
   isWsError,
+  type CatalogueLastCompleted,
+  type CatalogueTaskRecord,
+  type CrewRecord,
   type EquipmentRecord,
   type HomeAssistant,
   type InventoryRecord,
+  type MaintenanceLogRecord,
   type PanelInfo,
   type SystemRecord,
   type UnsubscribeFunc,
@@ -25,7 +32,7 @@ import {
 } from "./types";
 
 type Tab = "systems" | "equipment" | "inventory" | "tasks" | "log";
-type ListTab = "systems" | "equipment" | "inventory";
+type ListTab = "systems" | "equipment" | "inventory" | "tasks";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "systems", label: "Systems" },
@@ -39,6 +46,7 @@ const LIST_TABS: ReadonlySet<Tab> = new Set<Tab>([
   "systems",
   "equipment",
   "inventory",
+  "tasks",
 ]);
 
 // Root custom element Home Assistant mounts as the panel. It owns the live
@@ -164,6 +172,9 @@ export class BoatManagementPanel extends LitElement {
   @state() private _systems: SystemRecord[] = [];
   @state() private _equipment: EquipmentRecord[] = [];
   @state() private _inventory: InventoryRecord[] = [];
+  @state() private _catalogue: CatalogueTaskRecord[] = [];
+  @state() private _crew: CrewRecord[] = [];
+  @state() private _log: MaintenanceLogRecord[] = [];
   @state() private _counts: Record<string, number> = {};
   @state() private _tab: Tab = "systems";
   @state() private _query = "";
@@ -177,6 +188,7 @@ export class BoatManagementPanel extends LitElement {
     | SystemRecord
     | EquipmentRecord
     | InventoryRecord
+    | CatalogueTaskRecord
     | null = null;
   @state() private _saving = false;
   @state() private _sheetError: string | null = null;
@@ -223,6 +235,9 @@ export class BoatManagementPanel extends LitElement {
       this._systems = Object.values(data.collections.systems);
       this._equipment = Object.values(data.collections.equipment);
       this._inventory = Object.values(data.collections.inventory);
+      this._catalogue = Object.values(data.collections.task_catalogue);
+      this._crew = Object.values(data.collections.crew);
+      this._log = Object.values(data.collections.maintenance_log);
       this._error = null;
     } catch (err) {
       this._error = describe(err);
@@ -304,6 +319,13 @@ export class BoatManagementPanel extends LitElement {
           .inventory=${this._filteredInventory()}
           @bm-edit=${this._onEditInventory}
         ></boat-inventory-view>`;
+      case "tasks":
+        return html`<boat-catalogue-view
+          .tasks=${this._filteredCatalogue()}
+          .systemNames=${this._systemNames()}
+          .lastCompleted=${this._lastCompletedMap()}
+          @bm-edit=${this._onEditTask}
+        ></boat-catalogue-view>`;
       default: {
         const count = this._counts[this._tabCollection()] ?? 0;
         const label = TABS.find((t) => t.id === this._tab)!.label;
@@ -347,6 +369,22 @@ export class BoatManagementPanel extends LitElement {
           @bm-mark-expired=${this._onInventoryMarkExpired}
           @bm-close=${this._closeSheet}
         ></boat-inventory-sheet>`;
+      case "tasks":
+        return html`<boat-catalogue-sheet
+          .task=${this._sheetRecord as CatalogueTaskRecord | null}
+          .systems=${this._systemOptions()}
+          .equipmentOptions=${this._equipmentOptions()}
+          .inventoryOptions=${this._inventoryOptions()}
+          .verifiers=${this._verifierOptions()}
+          .lastCompleted=${this._lastCompletedFor(
+            this._sheetRecord as CatalogueTaskRecord | null,
+          )}
+          .saving=${this._saving}
+          .error=${this._sheetError}
+          @bm-save=${this._onCatalogueSave}
+          @bm-archive=${this._onCatalogueArchive}
+          @bm-close=${this._closeSheet}
+        ></boat-catalogue-sheet>`;
       default:
         return nothing;
     }
@@ -410,6 +448,62 @@ export class BoatManagementPanel extends LitElement {
     return map;
   }
 
+  private _filteredCatalogue(): CatalogueTaskRecord[] {
+    const query = this._query.trim().toLowerCase();
+    return this._catalogue
+      .filter((t) => t.active)
+      .filter((t) =>
+        query
+          ? `${t.title} ${t.description ?? ""} ${t.required_skills.join(" ")}`
+              .toLowerCase()
+              .includes(query)
+          : true,
+      )
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }
+
+  private _crewNames(): Record<string, string> {
+    const map: Record<string, string> = {};
+    for (const c of this._crew) map[c.id] = c.name;
+    return map;
+  }
+
+  // Verifier picker options: active crew, labelled with role so the skipper can
+  // pick someone permitted to verify (the backend enforces the role at
+  // verification time; the catalogue only records a default).
+  private _verifierOptions(): MultiselectOption[] {
+    return this._crew
+      .filter((c) => c.active)
+      .map((c) => ({ id: c.id, name: `${c.name} (${c.role})` }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Most recent verified completion for a task, resolved from the immutable log.
+  private _lastCompletedFor(
+    task: CatalogueTaskRecord | null,
+  ): CatalogueLastCompleted | null {
+    if (!task) return null;
+    const latest = this._log
+      .filter((e) => e.catalogue_task_id === task.id)
+      .sort((a, b) => b.completed_at_utc.localeCompare(a.completed_at_utc))[0];
+    if (!latest) return null;
+    const names = this._crewNames();
+    return {
+      date: latest.completed_at_local,
+      verifierName: names[latest.verified_by] ?? null,
+      notes: latest.notes ?? null,
+    };
+  }
+
+  private _lastCompletedMap(): Record<string, CatalogueLastCompleted> {
+    const out: Record<string, CatalogueLastCompleted> = {};
+    for (const task of this._catalogue) {
+      const summary = this._lastCompletedFor(task);
+      if (summary) out[task.id] = summary;
+    }
+    return out;
+  }
+
   private _systemOptions(): MultiselectOption[] {
     return this._systems
       .filter((s) => s.active)
@@ -465,9 +559,17 @@ export class BoatManagementPanel extends LitElement {
     this._open("inventory", e.detail);
   }
 
+  private _onEditTask(e: CustomEvent<CatalogueTaskRecord>): void {
+    this._open("tasks", e.detail);
+  }
+
   private _open(
     sheet: ListTab,
-    record: SystemRecord | EquipmentRecord | InventoryRecord,
+    record:
+      | SystemRecord
+      | EquipmentRecord
+      | InventoryRecord
+      | CatalogueTaskRecord,
   ): void {
     this._sheetRecord = record;
     this._sheetError = null;
@@ -616,6 +718,45 @@ export class BoatManagementPanel extends LitElement {
   private _onInventoryMarkExpired(e: CustomEvent<string>): void {
     const id = e.detail;
     void this._run(() => this._api!.markInventoryExpired(id), id);
+  }
+
+  // --- Catalogue writes ----------------------------------------------------
+  private _onCatalogueSave(e: CustomEvent<CatalogueDraft>): void {
+    const d = e.detail;
+    const raw = d.estimated_duration_minutes.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    const duration = parsed != null && Number.isFinite(parsed) ? parsed : null;
+    void this._run(() =>
+      d.id
+        ? this._api!.updateCatalogueTask(d.id, {
+            title: d.title,
+            description: d.description || null,
+            procedure: d.procedure || null,
+            safety_notes: d.safety_notes || null,
+            estimated_duration_minutes: duration,
+            default_verifier: d.default_verifier || null,
+            system_refs: d.system_refs,
+            equipment_refs: d.equipment_refs,
+            inventory_refs: d.inventory_refs,
+            required_skills: d.required_skills,
+          })
+        : this._api!.createCatalogueTask({
+            title: d.title,
+            description: d.description || undefined,
+            procedure: d.procedure || undefined,
+            safety_notes: d.safety_notes || undefined,
+            estimated_duration_minutes: duration ?? undefined,
+            default_verifier: d.default_verifier || undefined,
+            system_refs: d.system_refs,
+            equipment_refs: d.equipment_refs,
+            inventory_refs: d.inventory_refs,
+            required_skills: d.required_skills,
+          }),
+    );
+  }
+
+  private _onCatalogueArchive(e: CustomEvent<string>): void {
+    void this._run(() => this._api!.archiveCatalogueTask(e.detail));
   }
 }
 

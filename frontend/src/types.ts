@@ -74,6 +74,53 @@ export interface InventoryRecord {
   active: boolean;
 }
 
+// A reusable task definition from the owner-curated catalogue. Mirrors
+// TaskCatalogueItem.to_dict(). Trigger rules are carried opaquely: the panel
+// does not edit them in v1 (triggers are a separate concern), but it must
+// preserve them verbatim on update so an edit never drops them.
+export interface CatalogueTaskRecord {
+  id: string;
+  title: string;
+  description?: string | null;
+  system_refs: string[];
+  equipment_refs: string[];
+  inventory_refs: string[];
+  required_skills: string[];
+  estimated_duration_minutes?: number | null;
+  procedure?: string | null;
+  safety_notes?: string | null;
+  default_verifier?: string | null;
+  trigger_rules: Record<string, unknown>[];
+  last_completed_at_utc?: string | null;
+  active: boolean;
+  owner_curated: boolean;
+}
+
+// Crew member. Mirrors CrewMember.to_dict(). `role` drives who may verify work
+// onboard; the catalogue's default verifier references a crew member by id.
+export interface CrewRecord {
+  id: string;
+  name: string;
+  role: string;
+  skills: string[];
+  active: boolean;
+}
+
+// Immutable maintenance log entry. Mirrors MaintenanceLogEntry.to_dict(). The
+// panel reads only the slice it needs to surface a "last completed" summary;
+// the backend remains the source of truth for the full record.
+export interface MaintenanceLogRecord {
+  id: string;
+  catalogue_task_id: string;
+  work_item_id: string;
+  verified_by: string;
+  completed_by?: string | null;
+  completed_at_utc: string;
+  completed_at_local: string;
+  timezone_at_completion: string;
+  notes?: string | null;
+}
+
 export interface VesselRecord {
   id: string;
   name: string;
@@ -84,6 +131,17 @@ export interface VesselRecord {
 
 export type RecordMap<T> = Record<string, T>;
 
+// Derived (not a backend record): a compact summary of the most recent verified
+// completion of a catalogue task, resolved by the shell from the maintenance log
+// + crew. The date is the stored local string captured at completion time and is
+// shown verbatim — never re-derived from UTC (history must stay stable across
+// vessel timezone changes).
+export interface CatalogueLastCompleted {
+  date: string;
+  verifierName: string | null;
+  notes: string | null;
+}
+
 export interface BootstrapResult {
   entry_id: string;
   vessel: VesselRecord;
@@ -93,10 +151,10 @@ export interface BootstrapResult {
     systems: RecordMap<SystemRecord>;
     equipment: RecordMap<EquipmentRecord>;
     inventory: RecordMap<InventoryRecord>;
-    task_catalogue: RecordMap<Record<string, unknown>>;
+    task_catalogue: RecordMap<CatalogueTaskRecord>;
     work_items: RecordMap<Record<string, unknown>>;
-    maintenance_log: RecordMap<Record<string, unknown>>;
-    crew: RecordMap<Record<string, unknown>>;
+    maintenance_log: RecordMap<MaintenanceLogRecord>;
+    crew: RecordMap<CrewRecord>;
   };
   counts: Record<string, number>;
 }
