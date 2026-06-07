@@ -1,7 +1,7 @@
 {
   "domain": "boat_management",
   "name": "Boat Management",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/marimotica/boat_management",
   "issue_tracker": "https://github.com/marimotica/boat_management/issues",
   "codeowners": ["@marimotica"],

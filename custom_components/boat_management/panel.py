@@ -60,9 +60,22 @@ async def async_register_panel(hass: HomeAssistant) -> None:
     if not hass.data.get(_STATIC_REGISTERED):
         # cache_headers=False so an upgraded bundle is picked up without a hard
         # refresh; the file is tiny and served from local disk.
-        hass.http.register_static_path(
-            PANEL_STATIC_URL, str(_BUNDLE_PATH), cache_headers=False
-        )
+        # async_register_static_paths (awaitable, takes StaticPathConfig list)
+        # replaced register_static_path in HA 2024.x; support both.
+        if hasattr(hass.http, "async_register_static_paths"):
+            from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+
+            await hass.http.async_register_static_paths(
+                [
+                    StaticPathConfig(
+                        PANEL_STATIC_URL, str(_BUNDLE_PATH), cache_headers=False
+                    )
+                ]
+            )
+        else:
+            hass.http.register_static_path(  # type: ignore[attr-defined]
+                PANEL_STATIC_URL, str(_BUNDLE_PATH), cache_headers=False
+            )
         hass.data[_STATIC_REGISTERED] = True
 
     # Sidebar panel: once per domain. Tracked outside hass.data[DOMAIN] so the
