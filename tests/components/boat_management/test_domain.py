@@ -21,7 +21,7 @@ from custom_components.boat_management.inventory import (
     consume_inventory,
     create_inventory_item,
 )
-from custom_components.boat_management.logbook import (
+from custom_components.boat_management.maintenance_log import (
     amend_log_entry,
     verify_work_item,
 )

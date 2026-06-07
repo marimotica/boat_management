@@ -23,7 +23,7 @@ import voluptuous as vol
 from . import (
     equipment as equipment_ops,
     inventory as inventory_ops,
-    logbook as logbook_ops,
+    maintenance_log as logbook_ops,
     systems as systems_ops,
     task_catalogue as catalogue_ops,
     work_items as work_items_ops,

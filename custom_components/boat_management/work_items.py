@@ -3,7 +3,7 @@
 Work Items are instantiated from catalogue tasks. All status changes go through
 the :mod:`transitions` matrix so lifecycle rules live in exactly one place. The
 ``review -> done`` verification transition is special (it creates an immutable
-log entry) and lives in :mod:`logbook`.
+log entry) and lives in :mod:`maintenance_log`.
 """
 
 from __future__ import annotations
