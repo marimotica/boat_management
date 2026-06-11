@@ -676,6 +676,25 @@ describe("<boat-management-panel> work", () => {
   });
 });
 
+describe("<boat-management-panel> menu button", () => {
+  it("renders a menu button in the header and dispatches hass-toggle-menu on click", async () => {
+    const { hass } = fakeBackend();
+    const panel = await mountPanel(hass);
+
+    const menuBtn =
+      panel.shadowRoot!.querySelector<HTMLButtonElement>(".menu-btn");
+    expect(menuBtn).toBeTruthy();
+
+    // The event is dispatched from the panel element (shadow host) and bubbles
+    // up through the DOM with composed:true so HA's sidebar toggle receives it.
+    const fired: Event[] = [];
+    panel.addEventListener("hass-toggle-menu", (e) => fired.push(e));
+    menuBtn!.click();
+
+    expect(fired.length).toBe(1);
+  });
+});
+
 describe("<boat-management-panel> suggestions", () => {
   function suggestionsView(panel: HTMLElement) {
     return panel.shadowRoot!.querySelector("boat-suggestions-view");

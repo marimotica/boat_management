@@ -79,8 +79,41 @@ export class BoatManagementPanel extends LitElement {
         z-index: 5;
         background: var(--app-header-background-color, var(--bm-surface));
         color: var(--app-header-text-color, var(--bm-text));
-        padding: 14px 16px 10px;
+        /* Reserve space for the iOS status bar / notch in the companion app. */
+        padding-top: env(safe-area-inset-top);
         border-bottom: 1px solid var(--bm-divider);
+      }
+      /* Toolbar row: menu icon on the left, vessel identity block on the right. */
+      .header-toolbar {
+        display: flex;
+        align-items: center;
+        min-height: 56px;
+        padding: 0 8px;
+      }
+      /* 44 × 44 touch target matching HA's icon-button sizing. */
+      .menu-btn {
+        flex-shrink: 0;
+        width: 44px;
+        height: 44px;
+        border: none;
+        background: none;
+        color: inherit;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .menu-btn:hover,
+      .menu-btn:focus-visible {
+        background: rgba(128, 128, 128, 0.15);
+        outline: none;
+      }
+      .header-title {
+        flex: 1;
+        min-width: 0;
+        padding: 4px 8px 4px 4px;
       }
       .title {
         font-size: 20px;
@@ -88,7 +121,7 @@ export class BoatManagementPanel extends LitElement {
         line-height: 1.2;
       }
       .search {
-        margin-top: 12px;
+        padding: 0 16px 10px;
         position: relative;
       }
       .search input {
@@ -276,14 +309,37 @@ export class BoatManagementPanel extends LitElement {
     const showFab = (isList || this._tab === "work") && !this._loading;
     return html`
       <header>
-        <div class="title ellipsis">${this._vessel?.name ?? "Boat"}</div>
-        <div class="row" style="margin-top:4px">
-          ${this._timezone
-            ? html`<span class="chip">${this._timezone}</span>`
-            : nothing}
-          ${this._vessel?.home_port
-            ? html`<span class="muted count">${this._vessel.home_port}</span>`
-            : nothing}
+        <div class="header-toolbar">
+          <!-- Hamburger / sidebar-toggle button. Fires the standard HA event so
+               both the web browser and companion-app sidebar open reliably. -->
+          <button
+            class="menu-btn"
+            aria-label="Open navigation menu"
+            @click=${this._openMenu}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="24"
+              height="24"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z" />
+            </svg>
+          </button>
+          <div class="header-title">
+            <div class="title ellipsis">${this._vessel?.name ?? "Boat"}</div>
+            <div class="row" style="margin-top:4px">
+              ${this._timezone
+                ? html`<span class="chip">${this._timezone}</span>`
+                : nothing}
+              ${this._vessel?.home_port
+                ? html`<span class="muted count"
+                    >${this._vessel.home_port}</span
+                  >`
+                : nothing}
+            </div>
+          </div>
         </div>
         ${isList
           ? html`<div class="search">
@@ -619,6 +675,15 @@ export class BoatManagementPanel extends LitElement {
       : this._tab === "log"
         ? "maintenance_log"
         : this._tab;
+  }
+
+  // --- Navigation ----------------------------------------------------------
+  private _openMenu(): void {
+    // Dispatch HA's standard sidebar toggle event. Bubbles up through the
+    // shadow root so the companion app and browser builds both receive it.
+    this.dispatchEvent(
+      new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }),
+    );
   }
 
   // --- Sheet lifecycle -----------------------------------------------------
