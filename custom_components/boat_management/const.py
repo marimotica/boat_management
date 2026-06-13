@@ -186,12 +186,51 @@ ISSUE_INVALID_TRIGGER_RULE: Final = "invalid_trigger_rule"
 ISSUE_DUPLICATE_STABLE_ID: Final = "duplicate_stable_id"
 ISSUE_MIGRATION_FAILED: Final = "migration_failed"
 ISSUE_LOG_MISSING_TIMEZONE: Final = "log_entry_missing_timezone"
+ISSUE_MISSING_DOCUMENT_REF: Final = "missing_document_reference"
 
 # Platforms ------------------------------------------------------------------
 PLATFORMS: Final = ["binary_sensor", "sensor", "todo"]
 
 # Import/export schema --------------------------------------------------------
 EXPORT_SCHEMA_VERSION: Final = 1
+
+# Media / documents ----------------------------------------------------------
+#: Subdirectory (under ``hass.config.path(DOMAIN, <entry_id>)``) where uploaded
+#: blobs live. Blobs are intentionally kept OUT of ``.storage/`` (which is for
+#: small JSON) so large photos never bloat the serialized vessel snapshot.
+MEDIA_SUBDIR: Final = "media"
+#: Hard cap on a single uploaded blob. Photos from a phone comfortably fit; the
+#: limit exists so a malformed/huge upload fails fast instead of exhausting RAM.
+MEDIA_MAX_BYTES: Final = 15 * 1024 * 1024
+#: Content types we accept for attachments. Restricted to images plus PDF so the
+#: panel can safely render them inline; anything else is rejected at the edge.
+MEDIA_ALLOWED_CONTENT_TYPES: Final = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/heic",
+        "image/heif",
+        "application/pdf",
+    }
+)
+#: File extension chosen per content type when persisting a blob. The stored
+#: name is ``<document_id>.<ext>``; the original filename is metadata only.
+MEDIA_CONTENT_TYPE_EXTENSIONS: Final = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "application/pdf": "pdf",
+}
+#: Object types an uploaded document may be attached to (drives ``media_refs``).
+MEDIA_TARGET_TYPES: Final = ("equipment", "inventory")
+#: Authenticated HTTP path the serving view is mounted at. The opaque document
+#: id (never the filename) is the lookup key.
+MEDIA_URL_PREFIX: Final = f"/api/{DOMAIN}/media"
 
 # Custom panel (frontend) ----------------------------------------------------
 #: Sidebar URL slug for the management app.

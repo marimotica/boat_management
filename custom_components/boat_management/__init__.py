@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, PLATFORMS
 from .coordinator import BoatCoordinator
+from .media_storage import async_register_media_view
 from .panel import async_register_panel, async_unregister_panel
 from .repairs import async_evaluate_repairs
 from .services import async_register_services, async_unregister_services
@@ -35,6 +36,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Services and websocket API are registered once per domain.
     async_register_services(hass)
     async_register_websocket_api(hass)
+
+    # Register the authenticated media serving view (once per process).
+    async_register_media_view(hass)
 
     # Register the custom management panel (idempotent, once per domain).
     await async_register_panel(hass)

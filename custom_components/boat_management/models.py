@@ -155,6 +155,10 @@ class Equipment:
     documentation_refs: list[str] = field(default_factory=list)
     inventory_refs: list[str] = field(default_factory=list)
     meter_refs: list[str] = field(default_factory=list)
+    # Opaque ids of uploaded document/photo blobs (see media.py). Managed only
+    # through the attach/detach media ops, never free-form edits, so the audit
+    # trail stays authoritative.
+    media_refs: list[str] = field(default_factory=list)
     # Optional calendar maintenance interval (days). Drives the
     # equipment-due-maintenance projection; ``None`` means no schedule.
     maintenance_interval_days: int | None = None
@@ -176,6 +180,7 @@ class Equipment:
             "documentation_refs": list(self.documentation_refs),
             "inventory_refs": list(self.inventory_refs),
             "meter_refs": list(self.meter_refs),
+            "media_refs": list(self.media_refs),
             "maintenance_interval_days": self.maintenance_interval_days,
             "active": self.active,
         }
@@ -197,6 +202,7 @@ class Equipment:
             documentation_refs=list(data.get("documentation_refs") or []),
             inventory_refs=list(data.get("inventory_refs") or []),
             meter_refs=list(data.get("meter_refs") or []),
+            media_refs=list(data.get("media_refs") or []),
             maintenance_interval_days=data.get("maintenance_interval_days"),
             active=data.get("active", True),
         )
@@ -219,6 +225,9 @@ class InventoryItem:
     reorder_level: Decimal | None = None
     equipment_refs: list[str] = field(default_factory=list)
     supplier_refs: list[str] = field(default_factory=list)
+    # Opaque ids of uploaded document/photo blobs (see media.py); attach/detach
+    # ops only, mirroring Equipment.media_refs.
+    media_refs: list[str] = field(default_factory=list)
     expiry_date: str | None = None
     expired: bool = False
     active: bool = True
@@ -250,6 +259,7 @@ class InventoryItem:
             ),
             "equipment_refs": list(self.equipment_refs),
             "supplier_refs": list(self.supplier_refs),
+            "media_refs": list(self.media_refs),
             "expiry_date": self.expiry_date,
             "expired": self.expired,
             "active": self.active,
@@ -272,6 +282,7 @@ class InventoryItem:
             reorder_level=None if reorder is None else _dec(reorder),
             equipment_refs=list(data.get("equipment_refs") or []),
             supplier_refs=list(data.get("supplier_refs") or []),
+            media_refs=list(data.get("media_refs") or []),
             expiry_date=data.get("expiry_date"),
             expired=data.get("expired", False),
             active=data.get("active", True),

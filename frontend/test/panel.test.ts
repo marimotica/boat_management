@@ -4,13 +4,24 @@ import type {
   BootstrapResult,
   CatalogueTaskRecord,
   CrewRecord,
+  DocumentRecord,
+  EquipmentRecord,
   HomeAssistant,
+  InventoryRecord,
   MaintenanceLogRecord,
   SuggestionRecord,
   SystemRecord,
   WorkItemRecord,
 } from "../src/types";
-import { mount, update, waitFor, workItemRecord } from "./helpers";
+import {
+  mount,
+  update,
+  waitFor,
+  documentRecord,
+  equipmentRecord,
+  inventoryRecord,
+  workItemRecord,
+} from "./helpers";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -39,6 +50,14 @@ function fakeBackend(options: { failOn?: string } = {}) {
       active: true,
     },
   };
+  // Equipment and inventory start empty: the nested-create flow builds them up
+  // from scratch (inventory → equipment → system) so the test asserts the
+  // server-assigned ids flow back into each parent for auto-selection.
+  const equipment: Record<string, EquipmentRecord> = {};
+  const inventory: Record<string, InventoryRecord> = {};
+  // Attached photos/PDFs, keyed by document id. Upload adds a record here and
+  // pushes its id onto the target's media_refs; detach reverses both.
+  const documents: Record<string, DocumentRecord> = {};
   const calls: Record<string, unknown>[] = [];
   let seq = 100;
 
@@ -131,13 +150,14 @@ function fakeBackend(options: { failOn?: string } = {}) {
     schema_version: 1,
     collections: {
       systems: { ...systems },
-      equipment: {},
-      inventory: {},
+      equipment: { ...equipment },
+      inventory: { ...inventory },
       task_catalogue: { ...tasks },
       work_items: { ...workItems },
       maintenance_log: { ...log },
       crew: { ...crew },
     },
+    documents: { ...documents },
     counts: {
       systems: Object.keys(systems).length,
       task_catalogue: Object.keys(tasks).length,
@@ -174,6 +194,32 @@ function fakeBackend(options: { failOn?: string } = {}) {
         case "boat_management/archive_system": {
           systems[msg.system_id as string].active = false;
           return systems[msg.system_id as string];
+        }
+        case "boat_management/create_equipment": {
+          const id = `eq-${seq++}`;
+          equipment[id] = equipmentRecord({
+            id,
+            name: msg.name as string,
+            // The auto-selected system id (from a nested system create) rides
+            // through verbatim so the test can assert it landed here.
+            system_id: (msg.system_id as string) ?? null,
+            inventory_refs: (msg.inventory_refs as string[]) ?? [],
+            documentation_refs: (msg.documentation_refs as string[]) ?? [],
+          });
+          return equipment[id];
+        }
+        case "boat_management/create_inventory_item": {
+          const id = `inv-${seq++}`;
+          inventory[id] = inventoryRecord({
+            id,
+            name: msg.name as string,
+            quantity: (msg.quantity as string) ?? "0",
+            unit: (msg.unit as string) ?? "ea",
+            // The linked equipment id (from a nested equipment create) rides
+            // through verbatim so the test can assert the link was made.
+            equipment_refs: (msg.equipment_refs as string[]) ?? [],
+          });
+          return inventory[id];
         }
         case "boat_management/create_catalogue_task": {
           const id = `task-${seq++}`;
@@ -271,6 +317,44 @@ function fakeBackend(options: { failOn?: string } = {}) {
             created_work_item_ids: [id],
           };
         }
+        case "boat_management/upload_media": {
+          // Mirror the backend: store a document and push its id onto the
+          // target record's media_refs (equipment or inventory).
+          const id = `doc-${seq++}`;
+          const targetType = msg.target_type as string;
+          const targetId = msg.target_id as string;
+          const filename = msg.filename as string;
+          documents[id] = documentRecord({
+            id,
+            filename,
+            stored_filename: `${id}.${filename.split(".").pop() ?? "bin"}`,
+            content_type: msg.content_type as string,
+            kind: (msg.content_type as string).startsWith("image/")
+              ? "image"
+              : "document",
+            target_type: targetType,
+            target_id: targetId,
+          });
+          const target =
+            targetType === "equipment" ? equipment[targetId] : inventory[targetId];
+          target.media_refs = [...target.media_refs, id];
+          return { document: documents[id] };
+        }
+        case "boat_management/detach_media": {
+          const id = msg.document_id as string;
+          const doc = documents[id];
+          const target =
+            doc.target_type === "equipment"
+              ? equipment[doc.target_id]
+              : inventory[doc.target_id];
+          target.media_refs = target.media_refs.filter((r) => r !== id);
+          delete documents[id];
+          return { document_id: id, detached: true };
+        }
+        case "auth/sign_path":
+          // HA core command: echo the path back with a signature query param so
+          // the panel can render an authed media view via a plain <img>.
+          return { path: `${msg.path as string}?authSig=sig-${seq++}` };
         default:
           throw new Error(`unexpected command ${type}`);
       }
@@ -280,7 +364,7 @@ function fakeBackend(options: { failOn?: string } = {}) {
     },
   } as unknown as HomeAssistant;
 
-  return { hass, calls, systems, tasks, workItems, log };
+  return { hass, calls, systems, tasks, workItems, log, equipment, inventory, documents };
 }
 
 async function mountPanel(hass: HomeAssistant) {
@@ -304,6 +388,32 @@ function rows(panel: HTMLElement): HTMLLIElement[] {
   return [...view.shadowRoot!.querySelectorAll<HTMLLIElement>("li")];
 }
 
+// Two-mode navigation: the bottom nav switches mode (Work/Locker) and the
+// segmented control switches section within the active mode. Tests drive both
+// via stable data-* hooks rather than label text.
+function modeButton(panel: HTMLElement, mode: string): HTMLButtonElement {
+  return panel.shadowRoot!.querySelector<HTMLButtonElement>(
+    `nav button[data-mode="${mode}"]`,
+  )!;
+}
+
+function sectionButton(panel: HTMLElement, section: string): HTMLButtonElement {
+  return panel.shadowRoot!.querySelector<HTMLButtonElement>(
+    `.segments button[data-section="${section}"]`,
+  )!;
+}
+
+async function openSection(
+  panel: BoatManagementPanel,
+  mode: string,
+  section: string,
+): Promise<void> {
+  modeButton(panel, mode).click();
+  await update(panel);
+  sectionButton(panel, section).click();
+  await update(panel);
+}
+
 describe("<boat-management-panel> bootstrap", () => {
   it("renders the vessel identity and active timezone", async () => {
     const { hass } = fakeBackend();
@@ -317,6 +427,7 @@ describe("<boat-management-panel> bootstrap", () => {
   it("lists active systems sorted by name", async () => {
     const { hass } = fakeBackend();
     const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "systems");
     const names = rows(panel).map((li) =>
       li.querySelector(".name")!.textContent!.trim(),
     );
@@ -334,6 +445,7 @@ describe("<boat-management-panel> create flow", () => {
   it("opens the create sheet from the FAB and persists a new system", async () => {
     const { hass, calls, systems } = fakeBackend();
     const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "systems");
 
     panel.shadowRoot!.querySelector<HTMLButtonElement>(".fab")!.click();
     await waitFor(() => !!panel.shadowRoot!.querySelector("boat-system-sheet"));
@@ -364,10 +476,164 @@ describe("<boat-management-panel> create flow", () => {
   });
 });
 
+describe("<boat-management-panel> nested create", () => {
+  // Locate each sheet in the (possibly stacked) panel shadow root by tag.
+  function sheet(
+    panel: HTMLElement,
+    kind: "inventory" | "equipment" | "system",
+  ) {
+    return panel.shadowRoot!.querySelector(`boat-${kind}-sheet`);
+  }
+  // Set a sheet's text input and let its render settle.
+  async function type(
+    sheet: Element,
+    id: string,
+    value: string,
+  ): Promise<void> {
+    const input = sheet.shadowRoot!.querySelector<HTMLInputElement>(`#${id}`)!;
+    input.value = value;
+    input.dispatchEvent(new InputEvent("input"));
+    await update(sheet as HTMLElement);
+  }
+  const fab = (panel: HTMLElement) =>
+    panel.shadowRoot!.querySelector<HTMLButtonElement>(".fab")!;
+  const tap = (sheet: Element, selector: string) =>
+    sheet.shadowRoot!.querySelector<HTMLButtonElement>(selector)!.click();
+
+  it("builds inventory → equipment → system, auto-selecting each new child", async () => {
+    const { hass, calls, systems, equipment, inventory } = fakeBackend();
+    const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "inventory");
+
+    // 1. Open the inventory create sheet and type the name we must not lose.
+    fab(panel).click();
+    await waitFor(() => !!sheet(panel, "inventory"));
+    const invSheet = sheet(panel, "inventory")!;
+    await update(invSheet as HTMLElement);
+    await type(invSheet, "name", "Raw water impeller");
+
+    // 2. Spawn a nested equipment create; the inventory sheet drops behind it.
+    tap(invSheet, ".addnew");
+    await waitFor(() => !!sheet(panel, "equipment"));
+    const eqSheet = sheet(panel, "equipment")!;
+    await update(eqSheet as HTMLElement);
+    await waitFor(() =>
+      invSheet
+        .shadowRoot!.querySelector(".scrim")!
+        .classList.contains("behind"),
+    );
+    await type(eqSheet, "name", "Bilge pump");
+
+    // 3. Spawn a nested system create from the equipment sheet.
+    tap(eqSheet, ".addnew");
+    await waitFor(() => !!sheet(panel, "system"));
+    const sysSheet = sheet(panel, "system")!;
+    await update(sysSheet as HTMLElement);
+    await type(sysSheet, "name", "Bilge");
+
+    // 4. Save the system: it pops and the equipment sheet auto-selects it.
+    tap(sysSheet, ".primary");
+    await waitFor(() => !sheet(panel, "system"));
+    const newSystem = Object.values(systems).find((s) => s.name === "Bilge")!;
+    expect(newSystem).toBeTruthy();
+    // The server-assigned system id is injected and selected in the equipment
+    // sheet (refresh ran first, so the option already exists to be picked).
+    await waitFor(() => {
+      const select =
+        eqSheet.shadowRoot!.querySelector<HTMLSelectElement>("#system");
+      return !!select && select.value === newSystem.id;
+    });
+
+    // 5. Save the equipment: it pops and the inventory sheet links it.
+    tap(eqSheet, ".primary");
+    await waitFor(() => !sheet(panel, "equipment"));
+    const newEquip = Object.values(equipment).find(
+      (e) => e.name === "Bilge pump",
+    )!;
+    expect(newEquip).toBeTruthy();
+    // The equipment create carried the auto-selected system id end to end.
+    const eqCall = calls.find(
+      (c) => c.type === "boat_management/create_equipment",
+    );
+    expect(eqCall).toMatchObject({
+      name: "Bilge pump",
+      system_id: newSystem.id,
+    });
+    // The inventory draft survived both nested creates (no reseed).
+    await update(invSheet as HTMLElement);
+    expect(
+      invSheet.shadowRoot!.querySelector<HTMLInputElement>("#name")!.value,
+    ).toBe("Raw water impeller");
+
+    // 6. Save the inventory: the whole stack closes.
+    tap(invSheet, ".primary");
+    await waitFor(() => !sheet(panel, "inventory"));
+    const invCall = calls.find(
+      (c) => c.type === "boat_management/create_inventory_item",
+    );
+    // The panel never invents the id; it links the new equipment by its
+    // server-assigned id and trusts the server for its own id.
+    expect(invCall).toMatchObject({ name: "Raw water impeller" });
+    expect(invCall).not.toHaveProperty("id");
+    expect(invCall!.equipment_refs).toEqual([newEquip.id]);
+    const created = Object.values(inventory).find(
+      (i) => i.name === "Raw water impeller",
+    )!;
+    expect(created.equipment_refs).toEqual([newEquip.id]);
+    // Nothing is left open.
+    expect(sheet(panel, "inventory")).toBeNull();
+    expect(sheet(panel, "equipment")).toBeNull();
+    expect(sheet(panel, "system")).toBeNull();
+  });
+
+  it("keeps a failing nested child open with the parents preserved behind it", async () => {
+    const { hass } = fakeBackend({ failOn: "boat_management/create_system" });
+    const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "inventory");
+
+    fab(panel).click();
+    await waitFor(() => !!sheet(panel, "inventory"));
+    const invSheet = sheet(panel, "inventory")!;
+    await update(invSheet as HTMLElement);
+    await type(invSheet, "name", "Raw water impeller");
+
+    tap(invSheet, ".addnew");
+    await waitFor(() => !!sheet(panel, "equipment"));
+    const eqSheet = sheet(panel, "equipment")!;
+    await update(eqSheet as HTMLElement);
+    await type(eqSheet, "name", "Bilge pump");
+
+    tap(eqSheet, ".addnew");
+    await waitFor(() => !!sheet(panel, "system"));
+    const sysSheet = sheet(panel, "system")!;
+    await update(sysSheet as HTMLElement);
+    await type(sysSheet, "name", "Bilge");
+
+    // The create fails: the system sheet stays open and shows the error.
+    tap(sysSheet, ".primary");
+    await waitFor(() =>
+      Boolean(sheet(panel, "system")?.shadowRoot!.querySelector(".banner")),
+    );
+    expect(
+      sheet(panel, "system")!.shadowRoot!.querySelector(".banner")!.textContent,
+    ).toContain("name already exists");
+    // The parent chain is still mounted beneath it (nothing was popped), and the
+    // equipment sheet received no system injection (the create failed).
+    expect(sheet(panel, "equipment")).toBeTruthy();
+    expect(sheet(panel, "inventory")).toBeTruthy();
+    expect(
+      sheet(panel, "equipment")!.shadowRoot!.querySelector<HTMLSelectElement>(
+        "#system",
+      )!.value,
+    ).toBe("");
+  });
+});
+
 describe("<boat-management-panel> edit flow", () => {
   it("seeds the sheet from the tapped row and updates by id", async () => {
     const { hass, calls } = fakeBackend();
     const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "systems");
 
     // Electrical is first after sorting.
     rows(panel)[0].click();
@@ -395,10 +661,143 @@ describe("<boat-management-panel> edit flow", () => {
   });
 });
 
+describe("<boat-management-panel> media", () => {
+  // Open the inventory edit sheet for a seeded item by tapping its row.
+  async function openInventorySheet(panel: BoatManagementPanel) {
+    await openSection(panel, "locker", "inventory");
+    const view = panel.shadowRoot!.querySelector("boat-inventory-view")!;
+    view.shadowRoot!.querySelector<HTMLLIElement>("li")!.click();
+    await waitFor(
+      () => !!panel.shadowRoot!.querySelector("boat-inventory-sheet"),
+    );
+    const sheet = panel.shadowRoot!.querySelector("boat-inventory-sheet")!;
+    await update(sheet as HTMLElement);
+    return sheet;
+  }
+  function capture(sheet: Element) {
+    return sheet.shadowRoot!.querySelector("boat-media-capture") as HTMLElement & {
+      media: { id: string; url: string | null }[];
+    };
+  }
+
+  it("uploads a picked photo and re-points the open sheet to show it", async () => {
+    const { hass, calls, inventory, documents } = fakeBackend();
+    inventory["inv-1"] = inventoryRecord({ id: "inv-1", name: "Impeller" });
+    const panel = await mountPanel(hass);
+    const sheet = await openInventorySheet(panel);
+
+    // The capture child emits a base64 pick; the shell derives the target from
+    // the open frame (inventory / inv-1) and uploads.
+    capture(sheet).dispatchEvent(
+      new CustomEvent("bm-media-pick", {
+        detail: {
+          filename: "impeller.jpg",
+          content_type: "image/jpeg",
+          data: "QUJD",
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+
+    await waitFor(() =>
+      calls.some((c) => c.type === "boat_management/upload_media"),
+    );
+    const call = calls.find((c) => c.type === "boat_management/upload_media")!;
+    expect(call).toMatchObject({
+      target_type: "inventory",
+      target_id: "inv-1",
+      filename: "impeller.jpg",
+      content_type: "image/jpeg",
+      data: "QUJD",
+    });
+    // The blob is stored and linked to the item.
+    expect(Object.keys(documents)).toHaveLength(1);
+    expect(inventory["inv-1"].media_refs).toHaveLength(1);
+    // The sheet stays open and re-points to the refreshed record, so the new
+    // tile appears without losing the editing context.
+    await waitFor(() => capture(sheet).media.length === 1);
+    expect(panel.shadowRoot!.querySelector("boat-inventory-sheet")).not.toBeNull();
+  });
+
+  it("signs the stored path so the photo renders through the authed view", async () => {
+    const { hass, calls, inventory, documents } = fakeBackend();
+    inventory["inv-1"] = inventoryRecord({
+      id: "inv-1",
+      name: "Impeller",
+      media_refs: ["doc-1"],
+    });
+    documents["doc-1"] = documentRecord({ id: "doc-1", target_id: "inv-1" });
+    const panel = await mountPanel(hass);
+    const sheet = await openInventorySheet(panel);
+
+    // Opening the sheet signs the visible media path (the view requires auth).
+    await waitFor(() =>
+      calls.some(
+        (c) =>
+          c.type === "auth/sign_path" &&
+          c.path === "/api/boat_management/media/entry-1/doc-1",
+      ),
+    );
+    // Once signed, the resolved URL (with authSig) reaches the tile.
+    await waitFor(() => capture(sheet).media[0]?.url?.includes("authSig") ?? false);
+    await update(sheet as HTMLElement);
+    const img = capture(sheet).shadowRoot!.querySelector("img");
+    expect(img!.getAttribute("src")).toContain("authSig");
+  });
+
+  it("signs each media path at most once", async () => {
+    const { hass, calls, inventory, documents } = fakeBackend();
+    inventory["inv-1"] = inventoryRecord({
+      id: "inv-1",
+      name: "Impeller",
+      media_refs: ["doc-1"],
+    });
+    documents["doc-1"] = documentRecord({ id: "doc-1", target_id: "inv-1" });
+    const panel = await mountPanel(hass);
+    const sheet = await openInventorySheet(panel);
+    await waitFor(() => capture(sheet).media[0]?.url?.includes("authSig") ?? false);
+    // Re-render the sheet a few times; the cached signature must not re-sign.
+    await update(sheet as HTMLElement);
+    await update(panel);
+    const signCalls = calls.filter(
+      (c) => c.type === "auth/sign_path" && c.path?.toString().includes("doc-1"),
+    );
+    expect(signCalls).toHaveLength(1);
+  });
+
+  it("detaches a photo and clears it from the open sheet", async () => {
+    const { hass, calls, inventory, documents } = fakeBackend();
+    inventory["inv-1"] = inventoryRecord({
+      id: "inv-1",
+      name: "Impeller",
+      media_refs: ["doc-1"],
+    });
+    documents["doc-1"] = documentRecord({ id: "doc-1", target_id: "inv-1" });
+    const panel = await mountPanel(hass);
+    const sheet = await openInventorySheet(panel);
+    await waitFor(() => capture(sheet).media.length === 1);
+
+    capture(sheet).shadowRoot!.querySelector<HTMLButtonElement>(".item .rm")!.click();
+
+    await waitFor(() =>
+      calls.some((c) => c.type === "boat_management/detach_media"),
+    );
+    expect(
+      calls.find((c) => c.type === "boat_management/detach_media"),
+    ).toMatchObject({ document_id: "doc-1" });
+    // The backend removed the ref + blob; the re-pointed sheet shows no tiles.
+    expect(documents["doc-1"]).toBeUndefined();
+    expect(inventory["inv-1"].media_refs).toHaveLength(0);
+    await waitFor(() => capture(sheet).media.length === 0);
+  });
+});
+
 describe("<boat-management-panel> error handling", () => {
   it("surfaces a websocket error in the sheet and keeps it open", async () => {
     const { hass } = fakeBackend({ failOn: "boat_management/create_system" });
     const panel = await mountPanel(hass);
+    await openSection(panel, "locker", "systems");
 
     panel.shadowRoot!.querySelector<HTMLButtonElement>(".fab")!.click();
     await waitFor(() => !!panel.shadowRoot!.querySelector("boat-system-sheet"));
@@ -425,17 +824,24 @@ describe("<boat-management-panel> error handling", () => {
   });
 });
 
-describe("<boat-management-panel> placeholder tabs", () => {
-  it("shows a coming-soon state for not-yet-built domains", async () => {
+describe("<boat-management-panel> logbook", () => {
+  function logbookView(panel: HTMLElement) {
+    return panel.shadowRoot!.querySelector("boat-logbook-view");
+  }
+
+  it("renders the immutable log with resolved task title, verifier and notes", async () => {
     const { hass } = fakeBackend();
     const panel = await mountPanel(hass);
-    const logTab = [
-      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
-    ].find((b) => b.textContent!.includes("Log"))!;
-    logTab.click();
-    await update(panel);
-    const main = panel.shadowRoot!.querySelector("main")!;
-    expect(main.textContent).toContain("Log coming soon");
+    await openSection(panel, "work", "log");
+    const view = logbookView(panel)!;
+    expect(view).toBeTruthy();
+    const entry = view.shadowRoot!.querySelector("li")!;
+    // Task title is resolved from the catalogue, verifier from crew, and the
+    // local completion string + notes are shown verbatim from the log.
+    expect(entry.textContent).toContain("Service raw-water pump");
+    expect(entry.textContent).toContain("2024-05-01 11:00");
+    expect(entry.textContent).toContain("Sam");
+    expect(entry.textContent).toContain("Replaced impeller");
   });
 });
 
@@ -445,11 +851,7 @@ describe("<boat-management-panel> catalogue", () => {
   }
 
   async function openTasks(panel: BoatManagementPanel) {
-    const tab = [
-      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
-    ].find((b) => b.textContent!.includes("Tasks"))!;
-    tab.click();
-    await update(panel);
+    await openSection(panel, "locker", "tasks");
   }
 
   it("renders catalogue tasks with the resolved last-completed summary", async () => {
@@ -548,11 +950,7 @@ describe("<boat-management-panel> work", () => {
     ];
   }
   async function openWork(panel: BoatManagementPanel) {
-    const tab = [
-      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
-    ].find((b) => b.textContent!.includes("Work"))!;
-    tab.click();
-    await update(panel);
+    await openSection(panel, "work", "board");
   }
 
   it("renders the board with seeded work grouped by status", async () => {
@@ -700,11 +1098,7 @@ describe("<boat-management-panel> suggestions", () => {
     return panel.shadowRoot!.querySelector("boat-suggestions-view");
   }
   async function openOps(panel: BoatManagementPanel) {
-    const tab = [
-      ...panel.shadowRoot!.querySelectorAll<HTMLButtonElement>("nav button"),
-    ].find((b) => b.textContent!.includes("Ops"))!;
-    tab.click();
-    await update(panel);
+    await openSection(panel, "work", "ops");
   }
 
   it("renders state-driven suggestions fetched from the backend", async () => {

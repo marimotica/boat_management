@@ -20,6 +20,7 @@ from .validators import (
     check_equipment_references,
     check_inventory_quantities,
     check_log_entry_timezones,
+    check_media_references,
     check_work_item_references,
 )
 
@@ -30,6 +31,7 @@ def _reference_problems(data: BoatData) -> list[dict[str, Any]]:
     problems += check_inventory_quantities(data.inventory)
     problems += check_work_item_references(data.work_items, data.task_catalogue)
     problems += check_log_entry_timezones(data.maintenance_log)
+    problems += check_media_references(data.equipment, data.inventory, data.documents)
     return [p.to_dict() for p in problems]
 
 

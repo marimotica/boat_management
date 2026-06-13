@@ -117,6 +117,88 @@ describe("<boat-inventory-sheet> mark expired", () => {
   });
 });
 
+describe("<boat-inventory-sheet> nested equipment create", () => {
+  it("emits bm-create-equipment when the inline add is tapped", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+    });
+    const event = nextEvent(el, "bm-create-equipment");
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".addnew")!.click();
+    await event; // resolves => emitted
+  });
+
+  it("links and selects a freshly-created equipment id on injection", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+      equipmentOptions: [{ id: "eq-9", name: "New pump" }],
+    });
+    const name = q(el, "#name") as HTMLInputElement;
+    name.value = "Impeller";
+    name.dispatchEvent(new InputEvent("input"));
+    await update(el);
+
+    // The shell delivers the server-assigned id with a fresh token.
+    el.addEquipmentRef = { token: 1, id: "eq-9" };
+    await update(el);
+
+    const event = nextEvent<InventoryDraft>(el, "bm-save");
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".primary")!.click();
+    expect((await event).detail.equipment_refs).toEqual(["eq-9"]);
+  });
+
+  it("applies each new token once and never duplicates an existing ref", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+    });
+    const name = q(el, "#name") as HTMLInputElement;
+    name.value = "Impeller";
+    name.dispatchEvent(new InputEvent("input"));
+    await update(el);
+
+    el.addEquipmentRef = { token: 1, id: "eq-1" };
+    await update(el);
+    el.addEquipmentRef = { token: 2, id: "eq-2" };
+    await update(el);
+    // A new object carrying an already-applied token is ignored (the guard
+    // prevents re-injecting on an unrelated re-render).
+    el.addEquipmentRef = { token: 2, id: "eq-3" };
+    await update(el);
+    // Re-delivering eq-1 under a fresh token must not duplicate it.
+    el.addEquipmentRef = { token: 3, id: "eq-1" };
+    await update(el);
+
+    const event = nextEvent<InventoryDraft>(el, "bm-save");
+    el.shadowRoot!.querySelector<HTMLButtonElement>(".primary")!.click();
+    expect((await event).detail.equipment_refs).toEqual(["eq-1", "eq-2"]);
+  });
+
+  it("preserves the in-flight draft when injecting (no reseed)", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+    });
+    const name = q(el, "#name") as HTMLInputElement;
+    name.value = "Raw water impeller";
+    name.dispatchEvent(new InputEvent("input"));
+    await update(el);
+
+    el.addEquipmentRef = { token: 1, id: "eq-9" };
+    await update(el);
+
+    // The injection must not clobber the typed name.
+    expect((q(el, "#name") as HTMLInputElement).value).toBe(
+      "Raw water impeller",
+    );
+  });
+
+  it("hides the scrim when behind a nested create", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+      behind: true,
+    });
+    expect(q(el, ".scrim")!.classList.contains("behind")).toBe(true);
+  });
+});
+
 describe("<boat-inventory-sheet> save + seed guard", () => {
   it("carries the id through on save in edit mode", async () => {
     const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
@@ -169,3 +251,31 @@ describe("<boat-inventory-sheet> save + seed guard", () => {
     expect((q(el, "#name") as HTMLInputElement).value).toBe("Zinc anode");
   });
 });
+
+describe("<boat-inventory-sheet> media", () => {
+  it("renders the capture child in save-first (no-add) mode on create", async () => {
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: null,
+    });
+    const capture = q(el, "boat-media-capture") as { canAdd: boolean } | null;
+    expect(capture).not.toBeNull();
+    expect(capture!.canAdd).toBe(false);
+  });
+
+  it("passes resolved media through and enables add in edit mode", async () => {
+    const media = [
+      { id: "d1", filename: "impeller.jpg", kind: "image", url: "/m/d1" },
+    ];
+    const el = await mount<BoatInventorySheet>("boat-inventory-sheet", {
+      inventory: inventoryRecord({ id: "i1" }),
+      media,
+    });
+    const capture = q(el, "boat-media-capture") as unknown as {
+      canAdd: boolean;
+      media: unknown[];
+    };
+    expect(capture.canAdd).toBe(true);
+    expect(capture.media).toEqual(media);
+  });
+});
+

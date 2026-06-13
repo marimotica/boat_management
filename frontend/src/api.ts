@@ -11,6 +11,7 @@ import type {
   HomeAssistant,
   InventoryRecord,
   MaintenanceLogRecord,
+  MediaUploadResult,
   SuggestionsResult,
   SystemRecord,
   UnsubscribeFunc,
@@ -342,6 +343,54 @@ export class BoatApi {
       ...prune({ work_item_id, verified_by, notes }),
     });
   }
+
+  // --- Media ---------------------------------------------------------------
+  // Upload a photo/PDF as base64 and attach it to an existing equipment/inventory
+  // record. The target must already exist (the backend re-validates under its
+  // lock), so this is an edit-mode action only. All fields are required, so the
+  // payload is sent verbatim (no pruning — `data` is the base64 blob).
+  uploadMedia(fields: {
+    target_type: string;
+    target_id: string;
+    filename: string;
+    content_type: string;
+    data: string;
+  }): Promise<MediaUploadResult> {
+    return this.hass.callWS<MediaUploadResult>({
+      type: "boat_management/upload_media",
+      ...fields,
+    });
+  }
+
+  // Detach (and forget) a document by its opaque id. The backend removes the
+  // ref + metadata and deletes the blob; the audit trail keeps the record.
+  detachMedia(
+    document_id: string,
+  ): Promise<{ document_id: string; detached: boolean }> {
+    return this.hass.callWS({
+      type: "boat_management/detach_media",
+      document_id,
+    });
+  }
+
+  // Sign an authenticated path so a plain <img>/<a> can load the media view
+  // (requires_auth=True) without an Authorization header. HA returns a path with
+  // a short-lived `authSig` query param. We sign generously so an open sheet's
+  // thumbnails do not expire mid-session.
+  signPath(path: string, expires = 3600): Promise<{ path: string }> {
+    return this.hass.callWS<{ path: string }>({
+      type: "auth/sign_path",
+      path,
+      expires,
+    });
+  }
+}
+
+// Build the (unsigned) media-view path for a document blob. Mirrors the backend
+// `build_media_url` so the two never drift; the opaque document id is the lookup
+// key, never the filename. Pass the result through `signPath` before display.
+export function mediaPath(entryId: string, documentId: string): string {
+  return `/api/boat_management/media/${entryId}/${documentId}`;
 }
 
 // Drop undefined/empty-string/empty-array fields so optional inputs aren't sent

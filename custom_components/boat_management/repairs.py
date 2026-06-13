@@ -22,6 +22,7 @@ from .validators import (
     check_equipment_references,
     check_inventory_quantities,
     check_log_entry_timezones,
+    check_media_references,
     check_work_item_references,
 )
 
@@ -53,6 +54,7 @@ def async_evaluate_repairs(hass: HomeAssistant, coordinator: BoatCoordinator) ->
     problems += check_inventory_quantities(data.inventory)
     problems += check_work_item_references(data.work_items, data.task_catalogue)
     problems += check_log_entry_timezones(data.maintenance_log)
+    problems += check_media_references(data.equipment, data.inventory, data.documents)
 
     for problem in problems:
         issue_id = f"{problem.issue_type}_{problem.object_id}"

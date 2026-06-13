@@ -4,6 +4,7 @@
 import type {
   CatalogueTaskRecord,
   CrewRecord,
+  DocumentRecord,
   EquipmentRecord,
   HomeAssistant,
   InventoryRecord,
@@ -45,6 +46,7 @@ export function equipmentRecord(
     meter_refs: [],
     maintenance_interval_days: null,
     active: true,
+    media_refs: [],
     ...over,
   };
 }
@@ -68,6 +70,7 @@ export function inventoryRecord(
     expiry_date: null,
     expired: false,
     active: true,
+    media_refs: [],
     ...over,
   };
 }
@@ -166,6 +169,26 @@ export function workItemRecord(
     evidence_refs: [],
     inventory_used: [],
     meter_readings: {},
+    ...over,
+  };
+}
+
+export function documentRecord(
+  over: Partial<DocumentRecord> = {},
+): DocumentRecord {
+  return {
+    id: "doc-1",
+    filename: "impeller.jpg",
+    stored_filename: "doc-1.jpg",
+    content_type: "image/jpeg",
+    size: 1234,
+    sha256: "0".repeat(64),
+    kind: "image",
+    target_type: "inventory",
+    target_id: "inv-1",
+    created_at_utc: "2024-05-01T10:00:00+00:00",
+    created_at_local: "2024-05-01 11:00",
+    timezone_at_event: "Europe/London",
     ...over,
   };
 }

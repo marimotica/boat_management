@@ -5,10 +5,12 @@ import { BoatInventoryView } from "../src/inventory-view";
 import { BoatCatalogueView } from "../src/catalogue-view";
 import { BoatWorkBoardView } from "../src/work-board-view";
 import { BoatSuggestionsView } from "../src/suggestions-view";
+import { BoatLogbookView } from "../src/logbook-view";
 import {
   catalogueRecord,
   equipmentRecord,
   inventoryRecord,
+  logRecord,
   mount,
   nextEvent,
   suggestionRecord,
@@ -328,5 +330,59 @@ describe("<boat-suggestions-view>", () => {
     const event = nextEvent<SuggestionRecord>(el, "bm-apply");
     el.shadowRoot!.querySelector<HTMLButtonElement>("button.apply")!.click();
     expect((await event).detail).toBe(target);
+  });
+});
+
+describe("<boat-logbook-view>", () => {
+  it("shows an empty state with no entries", async () => {
+    const el = await mount<BoatLogbookView>("boat-logbook-view", {
+      entries: [],
+    });
+    expect(el.shadowRoot!.querySelector(".empty")).not.toBeNull();
+    expect(el.shadowRoot!.querySelectorAll("li")).toHaveLength(0);
+  });
+
+  it("resolves the task title and verifier, showing the local date and tz", async () => {
+    const el = await mount<BoatLogbookView>("boat-logbook-view", {
+      entries: [
+        logRecord({
+          catalogue_task_id: "t1",
+          verified_by: "crew-1",
+          completed_by: "crew-1",
+          completed_at_local: "2024-05-01 11:00",
+          timezone_at_completion: "Europe/London",
+          notes: "Replaced impeller",
+        }),
+      ],
+      taskTitles: { t1: "Service raw-water pump" },
+      crewNames: { "crew-1": "Sam" },
+    });
+    const row = el.shadowRoot!.querySelector("li")!;
+    expect(row.textContent).toContain("Service raw-water pump");
+    expect(row.textContent).toContain("2024-05-01 11:00");
+    expect(row.querySelector(".chip")!.textContent).toContain("Europe/London");
+    // Same person did and verified the work: shown once, not duplicated.
+    expect(row.textContent).toContain("Verified by Sam");
+    expect(row.textContent).not.toContain("Done by");
+    expect(row.textContent).toContain("Replaced impeller");
+  });
+
+  it("names the doer separately when they differ from the verifier", async () => {
+    const el = await mount<BoatLogbookView>("boat-logbook-view", {
+      entries: [logRecord({ verified_by: "crew-1", completed_by: "crew-2" })],
+      crewNames: { "crew-1": "Sam", "crew-2": "Alex" },
+    });
+    expect(el.shadowRoot!.querySelector("li")!.textContent).toContain(
+      "Done by Alex · verified by Sam",
+    );
+  });
+
+  it("falls back to a generic title when the task is not resolvable", async () => {
+    const el = await mount<BoatLogbookView>("boat-logbook-view", {
+      entries: [logRecord({ catalogue_task_id: "gone" })],
+    });
+    expect(el.shadowRoot!.querySelector(".name")!.textContent).toContain(
+      "Maintenance",
+    );
   });
 });

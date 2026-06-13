@@ -2,8 +2,9 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 import "./multiselect";
+import "./media-capture";
 import type { MultiselectOption } from "./multiselect";
-import type { InventoryRecord } from "./types";
+import type { InventoryRecord, ResolvedMedia } from "./types";
 
 export interface InventoryDraft {
   id?: string;
@@ -42,6 +43,11 @@ export class BoatInventorySheet extends LitElement {
         display: flex;
         align-items: flex-end;
         z-index: 20;
+      }
+      /* A frame beneath a nested create stays mounted (so its form state is
+         preserved) but hidden, so only the top sheet dims and takes input. */
+      .scrim.behind {
+        display: none;
       }
       .sheet {
         width: 100%;
@@ -127,12 +133,39 @@ export class BoatInventorySheet extends LitElement {
       .actions .grow {
         flex: 1;
       }
+      /* Subtle inline "create related record" affordance under a picker. */
+      .addnew {
+        background: none;
+        border: none;
+        color: var(--bm-accent);
+        font-weight: 600;
+        font-size: 13px;
+        padding: 2px 2px 0;
+        margin-bottom: 14px;
+        align-self: flex-start;
+      }
+      .addnew:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
     `,
   ];
 
   // null/undefined => create mode; a record => edit mode.
   @property({ attribute: false }) inventory: InventoryRecord | null = null;
   @property({ attribute: false }) equipmentOptions: MultiselectOption[] = [];
+  // Attached photos/PDFs resolved (with signed URLs) by the shell. Editable only
+  // in edit mode: a new item has no server id to attach to yet.
+  @property({ attribute: false }) media: ResolvedMedia[] = [];
+  // True when a nested create sheet sits above this one: stay mounted (preserve
+  // the draft) but hidden.
+  @property({ type: Boolean }) behind = false;
+  // One-shot delivery of a freshly-created equipment id to auto-link here. The
+  // monotonic token guards against re-applying the same injection on re-render.
+  @property({ attribute: false }) addEquipmentRef: {
+    token: number;
+    id: string;
+  } | null = null;
   @property({ type: Boolean }) saving = false;
   @property() error: string | null = null;
 
@@ -153,14 +186,29 @@ export class BoatInventorySheet extends LitElement {
   // other fields.
   private _seeded = false;
   private _seededId: string | null = null;
+  // Token of the last applied equipment-ref injection (see `addEquipmentRef`).
+  private _injectedToken = -1;
 
   override willUpdate(changed: Map<string, unknown>): void {
-    if (!changed.has("inventory")) return;
-    const id = this.inventory?.id ?? null;
-    if (this._seeded && id === this._seededId) return;
-    this._seed();
-    this._seeded = true;
-    this._seededId = id;
+    if (changed.has("inventory")) {
+      const id = this.inventory?.id ?? null;
+      if (!this._seeded || id !== this._seededId) {
+        this._seed();
+        this._seeded = true;
+        this._seededId = id;
+      }
+    }
+    // A nested equipment create just completed: link the new equipment here and
+    // select it. Guarded by the token so a later re-render never re-injects.
+    if (changed.has("addEquipmentRef")) {
+      const inj = this.addEquipmentRef;
+      if (inj && inj.token !== this._injectedToken) {
+        this._injectedToken = inj.token;
+        if (!this._equipmentRefs.includes(inj.id)) {
+          this._equipmentRefs = [...this._equipmentRefs, inj.id];
+        }
+      }
+    }
   }
 
   private _seed(): void {
@@ -181,7 +229,10 @@ export class BoatInventorySheet extends LitElement {
   override render() {
     const editing = !!this.inventory;
     const canSave = this._name.trim().length > 0 && !this.saving;
-    return html`<div class="scrim" @click=${this._onScrim}>
+    return html`<div
+      class=${this.behind ? "scrim behind" : "scrim"}
+      @click=${this._onScrim}
+    >
       <div
         class="sheet"
         role="dialog"
@@ -297,6 +348,23 @@ export class BoatInventorySheet extends LitElement {
           @bm-change=${(e: CustomEvent<string[]>) =>
             (this._equipmentRefs = e.detail)}
         ></boat-multiselect>
+        <!-- Inline nested create: spawn an equipment sheet, then auto-link the
+             new item here on completion (via addEquipmentRef). -->
+        <button
+          class="addnew"
+          type="button"
+          ?disabled=${this.saving}
+          @click=${this._createEquipment}
+        >
+          + New equipment
+        </button>
+
+        <boat-media-capture
+          label="Photos & documents"
+          .media=${this.media}
+          .canAdd=${editing}
+          .disabled=${this.saving}
+        ></boat-media-capture>
 
         <div class="actions">
           ${editing && !this.inventory?.expired
@@ -409,6 +477,14 @@ export class BoatInventorySheet extends LitElement {
   private _close(): void {
     this.dispatchEvent(
       new CustomEvent("bm-close", { bubbles: true, composed: true }),
+    );
+  }
+
+  // Request a nested equipment create from the shell. The shell pushes an
+  // equipment sheet above this one and, on save, injects the new id back here.
+  private _createEquipment(): void {
+    this.dispatchEvent(
+      new CustomEvent("bm-create-equipment", { bubbles: true, composed: true }),
     );
   }
 

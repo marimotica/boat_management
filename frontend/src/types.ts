@@ -50,6 +50,9 @@ export interface EquipmentRecord {
   documentation_refs: string[];
   inventory_refs: string[];
   meter_refs: string[];
+  // Opaque ids of attached photo/PDF documents (see DocumentRecord). Managed
+  // only via the media upload/detach commands, never free-form edits.
+  media_refs: string[];
   maintenance_interval_days?: number | null;
   active: boolean;
 }
@@ -69,6 +72,9 @@ export interface InventoryRecord {
   reorder_level?: string | null;
   equipment_refs: string[];
   supplier_refs: string[];
+  // Opaque ids of attached photo/PDF documents (see DocumentRecord). Managed
+  // only via the media upload/detach commands, never free-form edits.
+  media_refs: string[];
   expiry_date?: string | null;
   expired: boolean;
   active: boolean;
@@ -127,6 +133,36 @@ export interface VesselRecord {
   home_port?: string | null;
   current_timezone?: string | null;
   default_timezone?: string | null;
+}
+
+// Metadata for an uploaded photo/PDF blob. Mirrors the backend document dict
+// (build_document_record). The blob itself lives on disk under `stored_filename`
+// and is served by the authenticated media view, addressed by opaque `id` (never
+// by filename). `kind` is "image" (renderable inline) or "document" (PDF/other).
+export interface DocumentRecord {
+  id: string;
+  filename: string;
+  stored_filename: string;
+  content_type: string;
+  size: number;
+  sha256: string;
+  kind: string;
+  target_type: string;
+  target_id: string;
+  created_at_utc: string;
+  created_at_local: string;
+  timezone_at_event: string;
+}
+
+// Derived (not a backend record): a media ref resolved for display. The shell
+// joins a target's `media_refs` to the bootstrap `documents` map and attaches a
+// signed, short-lived URL (null while the signature is still being fetched, so
+// the strip can show a placeholder rather than a broken/401 image).
+export interface ResolvedMedia {
+  id: string;
+  filename: string;
+  kind: string;
+  url: string | null;
 }
 
 // A quantity of an inventory item consumed by work. Mirrors InventoryUsage;
@@ -192,6 +228,10 @@ export interface BootstrapResult {
     maintenance_log: RecordMap<MaintenanceLogRecord>;
     crew: RecordMap<CrewRecord>;
   };
+  // Document metadata (photos/PDFs), keyed by opaque id. Read-only here: the
+  // panel resolves a record's media_refs against this map; uploads/detaches go
+  // through the dedicated media commands.
+  documents: RecordMap<DocumentRecord>;
   counts: Record<string, number>;
 }
 
@@ -236,6 +276,17 @@ export interface ApplyTriggerResult {
   would_create: string[];
   skipped_existing: string[];
   created_work_item_ids: string[];
+}
+
+// Result of a media upload: the stored document metadata plus the (unsigned)
+// serving URL the backend built for it. The panel refreshes the snapshot after
+// an upload, so it reads media back from `documents`/`media_refs` rather than
+// from this echo — the result mainly confirms the server-assigned id.
+export interface MediaUploadResult {
+  document: DocumentRecord;
+  url: string;
+  target_type: string;
+  target_id: string;
 }
 
 // A structured websocket error as surfaced by HA's connection layer.

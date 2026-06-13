@@ -63,6 +63,10 @@
     "log_entry_missing_timezone": {
       "title": "Log entry missing timezone",
       "description": "{detail} (object {object_id})."
+    },
+    "missing_document_reference": {
+      "title": "Broken document reference",
+      "description": "{detail} (object {object_id}, missing reference {missing_ref})."
     }
   }
 }

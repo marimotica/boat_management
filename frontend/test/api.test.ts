@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BoatApi } from "../src/api";
+import { BoatApi, mediaPath } from "../src/api";
 import { fakeHass } from "./helpers";
 
 // The API layer is a thin, auditable mapping onto websocket commands. These
@@ -433,5 +433,61 @@ describe("BoatApi operational intelligence", () => {
       source: "engine_hours",
       value: 250,
     });
+  });
+});
+
+describe("BoatApi media", () => {
+  // Upload carries the blob verbatim: every field is required and `data` is the
+  // base64 payload, so unlike create flows there is no pruning to apply.
+  it("uploadMedia forwards all fields without pruning", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).uploadMedia({
+      target_type: "inventory",
+      target_id: "inv-1",
+      filename: "impeller.jpg",
+      content_type: "image/jpeg",
+      data: "QUJD",
+    });
+    expect(calls[0]).toEqual({
+      type: "boat_management/upload_media",
+      target_type: "inventory",
+      target_id: "inv-1",
+      filename: "impeller.jpg",
+      content_type: "image/jpeg",
+      data: "QUJD",
+    });
+  });
+
+  it("detachMedia references the opaque document id only", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).detachMedia("doc-7");
+    expect(calls[0]).toEqual({
+      type: "boat_management/detach_media",
+      document_id: "doc-7",
+    });
+  });
+
+  it("signPath calls the core auth command with a default expiry", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).signPath("/api/boat_management/media/entry-1/doc-7");
+    expect(calls[0]).toEqual({
+      type: "auth/sign_path",
+      path: "/api/boat_management/media/entry-1/doc-7",
+      expires: 3600,
+    });
+  });
+
+  it("signPath honours an explicit expiry", async () => {
+    const { hass, calls } = fakeHass();
+    await new BoatApi(hass).signPath("/x", 60);
+    expect(calls[0]).toEqual({ type: "auth/sign_path", path: "/x", expires: 60 });
+  });
+
+  // mediaPath mirrors the backend `build_media_url`; the opaque document id is
+  // the lookup key, never the filename, so the two never drift.
+  it("mediaPath builds the entry-scoped view path from the document id", () => {
+    expect(mediaPath("entry-1", "doc-7")).toBe(
+      "/api/boat_management/media/entry-1/doc-7",
+    );
   });
 });

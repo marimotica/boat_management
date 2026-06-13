@@ -22,6 +22,7 @@ from typing import Any
 from .const import (
     ISSUE_LOG_MISSING_TIMEZONE,
     ISSUE_MISSING_CATALOGUE_REF,
+    ISSUE_MISSING_DOCUMENT_REF,
     ISSUE_MISSING_EQUIPMENT_REF,
     ISSUE_MISSING_INVENTORY_REF,
     ISSUE_NEGATIVE_INVENTORY,
@@ -254,4 +255,35 @@ def check_log_entry_timezones(
                     detail="Log entry is missing historical timezone",
                 )
             )
+    return problems
+
+
+def check_media_references(
+    equipment: Mapping[str, Equipment],
+    inventory: Mapping[str, InventoryItem],
+    documents: Mapping[str, Any],
+) -> list[ReferenceProblem]:
+    """Flag ``media_refs`` pointing at a document record that no longer exists.
+
+    A dangling media ref means the panel would render a broken attachment, so it
+    is surfaced as a repair/diagnostic rather than silently ignored.
+    """
+    problems: list[ReferenceProblem] = []
+    for holder in (equipment, inventory):
+        for owner in holder.values():
+            for doc_id in owner.media_refs:
+                if doc_id not in documents:
+                    problems.append(
+                        ReferenceProblem(
+                            issue_type=ISSUE_MISSING_DOCUMENT_REF,
+                            object_type=(
+                                "equipment"
+                                if isinstance(owner, Equipment)
+                                else "inventory"
+                            ),
+                            object_id=owner.id,
+                            detail=(f"'{owner.name}' references missing document"),
+                            missing_ref=doc_id,
+                        )
+                    )
     return problems

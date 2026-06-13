@@ -13,7 +13,10 @@ mutates, so the panel stays live without polling.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Callable
+import hashlib
 from typing import Any
 
 from homeassistant.components import websocket_api
@@ -28,7 +31,7 @@ from . import (
     task_catalogue as catalogue_ops,
     work_items as work_items_ops,
 )
-from .const import DOMAIN, STORAGE_VERSION
+from .const import DOMAIN, MEDIA_TARGET_TYPES, STORAGE_VERSION
 from .coordinator import BoatCoordinator
 from .diagnostics import build_diagnostics
 from .import_export import (
@@ -37,6 +40,14 @@ from .import_export import (
     export_logbook_payload,
     export_payload,
 )
+from .media import (
+    attach_media,
+    build_document_record,
+    build_media_url,
+    detach_media,
+    validate_media_upload,
+)
+from .media_storage import blob_path, delete_blob, write_blob
 from .search import filter_serialized
 from .suggestions import build_suggestions, plan_trigger_application
 from .transitions import TransitionError
@@ -77,6 +88,8 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_import_preview)
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_apply_trigger)
+    websocket_api.async_register_command(hass, ws_upload_media)
+    websocket_api.async_register_command(hass, ws_detach_media)
     for handler in WRITE_COMMANDS.values():
         websocket_api.async_register_command(hass, handler)
 
@@ -112,13 +125,21 @@ def _bootstrap_payload(coordinator: BoatCoordinator) -> dict[str, Any]:
         name: {k: v.to_dict() for k, v in getattr(data, name).items()}
         for name in _LIST_COLLECTIONS
     }
+    # Documents are plain metadata dicts (not typed models with to_dict), and
+    # are read-only here: the panel resolves media_refs -> {url, filename, ...}
+    # from this snapshot. Uploads/detaches mutate them via dedicated commands.
+    documents = {k: dict(v) for k, v in data.documents.items()}
     return {
         "entry_id": coordinator.entry.entry_id,
         "vessel": data.vessel.to_dict(),
         "active_timezone": coordinator.active_timezone,
         "schema_version": STORAGE_VERSION,
         "collections": collections,
-        "counts": {name: len(items) for name, items in collections.items()},
+        "documents": documents,
+        "counts": {
+            **{name: len(items) for name, items in collections.items()},
+            "documents": len(documents),
+        },
     }
 
 
@@ -414,6 +435,185 @@ def _build_apply_trigger_command() -> Callable[..., Any]:
 
 
 ws_apply_trigger = _build_apply_trigger_command()
+
+
+# ---------------------------------------------------------------------------
+# Media upload/detach: base64 blob in, opaque document reference out.
+#
+# Photos/PDFs are too large to live in the JSON snapshot, so the blob is written
+# to a per-entry media directory while only a small metadata record is attached
+# to the equipment/inventory item (in data.documents + the item's media_refs).
+# Decode/hash/file I/O run in an executor; the only mutation goes through the
+# coordinator lock + audit, exactly like every other write. The target is
+# re-validated under the lock so a concurrent retire cannot orphan a blob; if it
+# does, the freshly written blob is cleaned up before erroring.
+# ---------------------------------------------------------------------------
+def _decode_b64(payload: str) -> bytes:
+    """Strict base64 decode (run in an executor); raises on junk input."""
+    if payload.startswith("data:") and "," in payload:
+        # Tolerate a browser data: URL prefix even though the panel strips it.
+        payload = payload.split(",", 1)[1]
+    return base64.b64decode(payload, validate=True)
+
+
+def _sha256_hex(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+async def _upload_media(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    coordinator = _resolve(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No matching vessel")
+        return
+
+    target_type = msg["target_type"]
+    target_id = msg["target_id"]
+    # Pre-flight existence check so we never write a blob for an unknown target.
+    # attach_media re-checks under the lock to close the create/retire race.
+    collection = (
+        coordinator.data.equipment
+        if target_type == "equipment"
+        else coordinator.data.inventory
+    )
+    if target_id not in collection:
+        connection.send_error(
+            msg["id"],
+            "invalid_request",
+            f"Referenced {target_type} '{target_id}' does not exist",
+        )
+        return
+
+    try:
+        raw = await hass.async_add_executor_job(_decode_b64, msg["data"])
+    except (binascii.Error, ValueError):
+        connection.send_error(
+            msg["id"], "invalid_request", "Uploaded data is not valid base64"
+        )
+        return
+
+    try:
+        filename, content_type = validate_media_upload(
+            filename=msg["filename"],
+            content_type=msg["content_type"],
+            size=len(raw),
+        )
+    except ValidationError as err:
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+
+    sha256 = await hass.async_add_executor_job(_sha256_hex, raw)
+    record = build_document_record(
+        filename=filename,
+        content_type=content_type,
+        size=len(raw),
+        sha256=sha256,
+        target_type=target_type,
+        target_id=target_id,
+        timezone_name=coordinator.active_timezone,
+    )
+    path = blob_path(hass, coordinator.entry.entry_id, record["stored_filename"])
+    await hass.async_add_executor_job(write_blob, path, raw)
+
+    try:
+        stored = await coordinator.async_execute(
+            attach_media,
+            document=record,
+            actor=connection.user.id if connection.user else None,
+        )
+    except (ValidationError, TransitionError) as err:
+        # Target vanished between the pre-flight check and the lock: remove the
+        # now-orphaned blob so disk state matches the (unchanged) snapshot.
+        await hass.async_add_executor_job(delete_blob, path)
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+
+    connection.send_result(
+        msg["id"],
+        {
+            "document": stored,
+            "url": build_media_url(coordinator.entry.entry_id, stored["id"]),
+            "target_type": target_type,
+            "target_id": target_id,
+        },
+    )
+
+
+async def _detach_media(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    coordinator = _resolve(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No matching vessel")
+        return
+    document_id = msg["document_id"]
+    try:
+        removed = await coordinator.async_execute(
+            detach_media,
+            document_id=document_id,
+            actor=connection.user.id if connection.user else None,
+        )
+    except (ValidationError, TransitionError) as err:
+        connection.send_error(msg["id"], "invalid_request", str(err))
+        return
+    # Delete the blob only after the metadata removal is persisted, so a crash
+    # mid-way leaves a resolvable record rather than a dangling reference.
+    stored_filename = removed.get("stored_filename")
+    if stored_filename:
+        await hass.async_add_executor_job(
+            delete_blob,
+            blob_path(hass, coordinator.entry.entry_id, stored_filename),
+        )
+    connection.send_result(msg["id"], {"document_id": document_id, "detached": True})
+
+
+def _build_async_command(
+    command_type: str,
+    fields: dict[Any, Any],
+    handler: Callable[..., Any],
+) -> Callable[..., Any]:
+    """Build a registered async websocket command (``__wrapped__``-testable)."""
+    schema = {
+        vol.Required("type"): command_type,
+        vol.Optional("entry_id"): str,
+        **fields,
+    }
+
+    async def _handler(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        await handler(hass, connection, msg)
+
+    _handler.__name__ = command_type.replace("/", "_").replace("-", "_")
+    return websocket_api.websocket_command(schema)(
+        websocket_api.async_response(_handler)
+    )
+
+
+ws_upload_media = _build_async_command(
+    "boat_management/upload_media",
+    {
+        vol.Required("target_type"): vol.In(MEDIA_TARGET_TYPES),
+        vol.Required("target_id"): str,
+        vol.Required("filename"): str,
+        vol.Required("content_type"): str,
+        vol.Required("data"): str,
+    },
+    _upload_media,
+)
+
+ws_detach_media = _build_async_command(
+    "boat_management/detach_media",
+    {vol.Required("document_id"): str},
+    _detach_media,
+)
 
 
 # ---------------------------------------------------------------------------

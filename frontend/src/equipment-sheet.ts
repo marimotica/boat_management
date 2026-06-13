@@ -3,8 +3,9 @@ import { customElement, property, state } from "lit/decorators.js";
 import { sharedStyles } from "./styles";
 import "./chips-input";
 import "./multiselect";
+import "./media-capture";
 import type { MultiselectOption } from "./multiselect";
-import type { EquipmentRecord } from "./types";
+import type { EquipmentRecord, ResolvedMedia } from "./types";
 
 export interface EquipmentDraft {
   id?: string;
@@ -39,6 +40,11 @@ export class BoatEquipmentSheet extends LitElement {
         display: flex;
         align-items: flex-end;
         z-index: 20;
+      }
+      /* A frame beneath a nested create stays mounted (so its form state is
+         preserved) but hidden, so only the top sheet dims and takes input. */
+      .scrim.behind {
+        display: none;
       }
       .sheet {
         width: 100%;
@@ -81,6 +87,21 @@ export class BoatEquipmentSheet extends LitElement {
       .actions .grow {
         flex: 1;
       }
+      /* Subtle inline "create related record" affordance under a picker. */
+      .addnew {
+        background: none;
+        border: none;
+        color: var(--bm-accent);
+        font-weight: 600;
+        font-size: 13px;
+        padding: 2px 2px 0;
+        margin-bottom: 14px;
+        align-self: flex-start;
+      }
+      .addnew:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
     `,
   ];
 
@@ -88,6 +109,18 @@ export class BoatEquipmentSheet extends LitElement {
   @property({ attribute: false }) equipment: EquipmentRecord | null = null;
   @property({ attribute: false }) systems: MultiselectOption[] = [];
   @property({ attribute: false }) inventoryOptions: MultiselectOption[] = [];
+  // Attached photos/PDFs resolved (with signed URLs) by the shell. Editable only
+  // in edit mode: a new item has no server id to attach to yet.
+  @property({ attribute: false }) media: ResolvedMedia[] = [];
+  // True when a nested create sheet sits above this one: stay mounted (preserve
+  // the draft) but hidden.
+  @property({ type: Boolean }) behind = false;
+  // One-shot delivery of a freshly-created system id to select here. The
+  // monotonic token guards against re-applying the same injection on re-render.
+  @property({ attribute: false }) setSystem: {
+    token: number;
+    id: string;
+  } | null = null;
   @property({ type: Boolean }) saving = false;
   @property() error: string | null = null;
 
@@ -103,6 +136,9 @@ export class BoatEquipmentSheet extends LitElement {
   @state() private _interval = "";
   @state() private _docs: string[] = [];
   @state() private _inventoryRefs: string[] = [];
+
+  // Token of the last applied system injection (see `setSystem`).
+  private _injectedToken = -1;
 
   override willUpdate(changed: Map<string, unknown>): void {
     // Seed inputs whenever the target record identity changes.
@@ -124,12 +160,24 @@ export class BoatEquipmentSheet extends LitElement {
       this._docs = eq ? [...eq.documentation_refs] : [];
       this._inventoryRefs = eq ? [...eq.inventory_refs] : [];
     }
+    // A nested system create just completed: select it here. Guarded by the
+    // token so a later re-render never re-applies the same injection.
+    if (changed.has("setSystem")) {
+      const inj = this.setSystem;
+      if (inj && inj.token !== this._injectedToken) {
+        this._injectedToken = inj.token;
+        this._systemId = inj.id;
+      }
+    }
   }
 
   override render() {
     const editing = !!this.equipment;
     const canSave = this._name.trim().length > 0 && !this.saving;
-    return html`<div class="scrim" @click=${this._onScrim}>
+    return html`<div
+      class=${this.behind ? "scrim behind" : "scrim"}
+      @click=${this._onScrim}
+    >
       <div
         class="sheet"
         role="dialog"
@@ -172,6 +220,16 @@ export class BoatEquipmentSheet extends LitElement {
             )}
           </select>
         </div>
+        <!-- Inline nested create: spawn a system sheet, then auto-select the
+             new system here on completion (via setSystem). -->
+        <button
+          class="addnew"
+          type="button"
+          ?disabled=${this.saving}
+          @click=${this._createSystem}
+        >
+          + New system
+        </button>
 
         <div class="two">
           <div class="field">
@@ -291,6 +349,13 @@ export class BoatEquipmentSheet extends LitElement {
             (this._inventoryRefs = e.detail)}
         ></boat-multiselect>
 
+        <boat-media-capture
+          label="Photos & documents"
+          .media=${this.media}
+          .canAdd=${editing}
+          .disabled=${this.saving}
+        ></boat-media-capture>
+
         <div class="actions">
           ${editing
             ? html`<button
@@ -320,6 +385,14 @@ export class BoatEquipmentSheet extends LitElement {
   private _close(): void {
     this.dispatchEvent(
       new CustomEvent("bm-close", { bubbles: true, composed: true }),
+    );
+  }
+
+  // Request a nested system create from the shell. The shell pushes a system
+  // sheet above this one and, on save, injects the new id back here.
+  private _createSystem(): void {
+    this.dispatchEvent(
+      new CustomEvent("bm-create-system", { bubbles: true, composed: true }),
     );
   }
 
