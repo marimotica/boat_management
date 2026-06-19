@@ -14,26 +14,6 @@ update_vessel:
       selector:
         object:
 
-set_vessel_timezone:
-  name: Set vessel timezone
-  description: Change the active vessel timezone. Historical records are not rewritten.
-  fields:
-    entry_id:
-      selector:
-        text:
-    timezone:
-      name: Timezone
-      description: IANA timezone name (e.g. Europe/Paris).
-      required: true
-      selector:
-        text:
-    source:
-      name: Source
-      description: Where the timezone value came from.
-      selector:
-        select:
-          options: [manual, home_port, gps_position, imported]
-
 create_system:
   name: Create system
   fields:

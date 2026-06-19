@@ -1,8 +1,9 @@
 """Vessel domain operations (pure over :class:`BoatData`).
 
-Handles editable vessel attributes and the timezone-change workflow. The
-vessel timezone is operational state: changing it never rewrites historical
-local timestamps, it only affects new events (DESIGN.md timezone policy).
+Handles editable vessel attributes. The vessel timezone is always derived from
+Home Assistant's configured timezone; it is kept in sync by the coordinator and
+is not user-editable through services. Historical log entries preserve the
+timezone that was active at the time of completion.
 """
 
 from __future__ import annotations
@@ -11,10 +12,10 @@ from datetime import datetime
 from typing import Any
 
 from .audit import record_audit
-from .const import AuditEventType, TimezoneSource
+from .const import AuditEventType
 from .data import BoatData
 from .models import Vessel
-from .timezone import utc_now, validate_timezone
+from .timezone import utc_now
 from .validators import ValidationError
 
 
@@ -27,8 +28,8 @@ def update_vessel(
 ) -> Vessel:
     """Apply display/identity changes to the vessel.
 
-    Identity (``id``) is never mutable. Timezone fields go through
-    :func:`set_vessel_timezone` so the source/stamp are recorded correctly.
+    Identity (``id``) and timezone (``current_timezone``) are not mutable here;
+    timezone is managed automatically by the coordinator.
     """
     vessel = data.vessel
     before = vessel.to_dict()
@@ -40,15 +41,10 @@ def update_vessel(
         "mmsi",
         "home_port",
         "units",
-        "default_timezone",
     }
     unknown = set(changes) - allowed
     if unknown:
         raise ValidationError(f"Cannot update vessel field(s): {sorted(unknown)}")
-
-    if "default_timezone" in changes:
-        changes = dict(changes)
-        changes["default_timezone"] = validate_timezone(changes["default_timezone"])
 
     for key, value in changes.items():
         setattr(vessel, key, value)
@@ -67,47 +63,40 @@ def update_vessel(
     return vessel
 
 
-def set_vessel_timezone(
+def sync_ha_timezone(
     data: BoatData,
     *,
-    timezone_name: str,
-    source: str = TimezoneSource.MANUAL.value,
+    new_tz: str,
     actor: str | None = None,
     now: datetime | None = None,
 ) -> Vessel:
-    """Change the active vessel timezone, recording source and instant.
+    """Sync the vessel's current timezone from Home Assistant's configured timezone.
 
-    Historical events keep their own ``timezone_at_event``; only future events
-    use the new ``current_timezone``.
+    Called automatically by the coordinator when HA's timezone changes. Records
+    an audit event stamped in the *old* timezone before the change takes effect,
+    so the event's local rendering stays correct. Historical log entries are
+    never rewritten.
     """
     vessel = data.vessel
+    old_tz = vessel.current_timezone
+    if old_tz == new_tz:
+        return vessel
+
     before = vessel.to_dict()
-    new_tz = validate_timezone(timezone_name)
-
-    valid_sources = {s.value for s in TimezoneSource}
-    if source not in valid_sources:
-        raise ValidationError(
-            f"Invalid timezone source '{source}'; expected one of "
-            f"{sorted(valid_sources)}"
-        )
-
     instant = now or utc_now()
-    # Record audit in the timezone in effect *before* the change so the local
-    # rendering of the change event reflects where the vessel actually was.
+    # Stamp the audit event in the old timezone so local rendering is meaningful.
     record_audit(
         data.audit_events,
         event_type=AuditEventType.TIMEZONE_CHANGE,
         object_type="vessel",
         object_id=vessel.id,
-        timezone_name=vessel.current_timezone,
+        timezone_name=old_tz,
         actor=actor,
         before=before,
-        after={**before, "current_timezone": new_tz, "timezone_source": source},
-        reason=f"Vessel timezone set to {new_tz}",
+        after={**before, "current_timezone": new_tz},
+        reason=f"HA timezone changed from {old_tz} to {new_tz}",
         now=instant,
     )
 
     vessel.current_timezone = new_tz
-    vessel.timezone_source = source
-    vessel.timezone_updated_at_utc = instant
     return vessel

@@ -20,8 +20,6 @@ STORAGE_KEY_TEMPLATE: Final = "boat_management.{entry_id}"
 CONF_VESSEL_NAME: Final = "vessel_name"
 CONF_VESSEL_ID: Final = "vessel_id"
 CONF_HOME_PORT: Final = "home_port"
-CONF_DEFAULT_TIMEZONE: Final = "default_timezone"
-CONF_CURRENT_TIMEZONE: Final = "current_timezone"
 CONF_UNITS: Final = "units"
 CONF_LOW_STOCK_CREATES_WORK: Final = "low_stock_creates_work"
 CONF_CONSUME_ON_VERIFY: Final = "consume_inventory_on_verify"
@@ -97,15 +95,6 @@ class TriggerSource(StrEnum):
     METER_THRESHOLD = "meter_threshold"
 
 
-class TimezoneSource(StrEnum):
-    """Where the active vessel timezone value came from."""
-
-    MANUAL = "manual"
-    HOME_PORT = "home_port"
-    GPS_POSITION = "gps_position"
-    IMPORTED = "imported"
-
-
 class CrewRole(StrEnum):
     """Roles relevant to verification permissions."""
 
@@ -139,7 +128,6 @@ class AuditEventType(StrEnum):
 
 # Services -------------------------------------------------------------------
 SERVICE_UPDATE_VESSEL: Final = "update_vessel"
-SERVICE_SET_VESSEL_TIMEZONE: Final = "set_vessel_timezone"
 
 SERVICE_CREATE_SYSTEM: Final = "create_system"
 SERVICE_UPDATE_SYSTEM: Final = "update_system"

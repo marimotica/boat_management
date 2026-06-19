@@ -85,7 +85,6 @@ def test_full_boatdata_roundtrip() -> None:
         vessel=Vessel(
             id="v1",
             name="Argo",
-            default_timezone="UTC",
             current_timezone="Europe/Paris",
         ),
         systems={"s1": System(id="s1", name="Propulsion")},

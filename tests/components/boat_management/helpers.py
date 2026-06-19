@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from custom_components.boat_management.data import BoatData
 from custom_components.boat_management.models import Vessel
-from custom_components.boat_management.timezone import utc_now
 
 
 def make_data(timezone: str = "Europe/Paris") -> BoatData:
@@ -13,8 +12,6 @@ def make_data(timezone: str = "Europe/Paris") -> BoatData:
         vessel=Vessel(
             id="vessel_test",
             name="Test Vessel",
-            default_timezone=timezone,
             current_timezone=timezone,
-            timezone_updated_at_utc=utc_now(),
         )
     )

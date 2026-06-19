@@ -5,6 +5,11 @@ write lock. It is the only place that mutates-then-persists, ensuring service
 calls cannot race corrupt storage (AGENTS.md reliability rules). Domain logic
 stays in the pure modules; the coordinator just orchestrates lock -> run ->
 save -> notify.
+
+Timezone policy: the vessel timezone always mirrors Home Assistant's configured
+timezone. On startup the coordinator sets ``vessel.current_timezone`` from
+``hass.config.time_zone``; when HA's timezone changes (``EVENT_CORE_CONFIG_UPDATE``)
+the coordinator syncs it automatically and writes an audit event.
 """
 
 from __future__ import annotations
@@ -15,18 +20,17 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
+from homeassistant.core import Event, HomeAssistant, callback
 
 from .const import (
-    CONF_CURRENT_TIMEZONE,
-    CONF_DEFAULT_TIMEZONE,
     CONF_HOME_PORT,
     CONF_UNITS,
     CONF_VESSEL_ID,
     CONF_VESSEL_NAME,
     DEFAULT_UNITS,
-    TimezoneSource,
 )
+from . import vessel as vessel_ops
 from .data import BoatData
 from .models import Vessel, new_id
 from .storage import BoatStore
@@ -36,23 +40,16 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _build_initial_vessel(entry: ConfigEntry, ha_timezone: str) -> Vessel:
-    """Create the root vessel object from config entry data/options.
+    """Create the root vessel object from config entry data.
 
-    The vessel timezone defaults to Home Assistant's configured timezone
-    (DESIGN.md Timezone Design): Home Assistant is expected to run onboard, so
-    its timezone is the live operational default until a manual or GPS-derived
-    override is set.
+    The vessel timezone is always the HA-configured timezone; there is no
+    separate vessel-level timezone override.
     """
     merged: dict[str, Any] = {**entry.data, **entry.options}
-    default_tz = merged.get(CONF_DEFAULT_TIMEZONE) or ha_timezone
-    current_tz = merged.get(CONF_CURRENT_TIMEZONE) or default_tz
     return Vessel(
         id=merged.get(CONF_VESSEL_ID) or new_id("vessel"),
         name=merged.get(CONF_VESSEL_NAME) or "Vessel",
-        default_timezone=default_tz,
-        current_timezone=current_tz,
-        timezone_source=TimezoneSource.MANUAL.value,
-        timezone_updated_at_utc=utc_now(),
+        current_timezone=ha_timezone,
         home_port=merged.get(CONF_HOME_PORT),
         units=dict(merged.get(CONF_UNITS) or DEFAULT_UNITS),
     )
@@ -83,8 +80,7 @@ class BoatCoordinator:
         """Load (or initialize) persisted state for ``entry``."""
         store = BoatStore(hass, entry.entry_id)
         raw = await store.async_load()
-        # Home Assistant runs onboard, so its configured timezone is the live
-        # operational default whenever the vessel has no explicit override.
+        # HA runs onboard: its configured timezone is the canonical vessel timezone.
         ha_timezone = hass.config.time_zone or "UTC"
         if raw is None:
             data = BoatData(vessel=_build_initial_vessel(entry, ha_timezone))
@@ -95,22 +91,44 @@ class BoatCoordinator:
             )
         else:
             data = BoatData.from_dict(raw)
-            # Backfill so the active timezone is always resolvable as
-            # ``vessel.current_timezone or hass.config.time_zone``.
-            if not data.vessel.current_timezone:
-                data.vessel.current_timezone = ha_timezone
-            if not data.vessel.default_timezone:
-                data.vessel.default_timezone = ha_timezone
+            # Always sync to the current HA timezone on load, overwriting any
+            # stale stored value. This is intentional: HA timezone is truth.
+            data.vessel.current_timezone = ha_timezone
         return cls(hass, entry, store, data)
 
     @property
     def active_timezone(self) -> str:
         """Resolve the operational timezone for new events.
 
-        Per DESIGN.md, a vessel override is authoritative once set; otherwise
-        Home Assistant's configured timezone (it runs onboard) is the default.
+        ``vessel.current_timezone`` is kept in sync with HA's timezone by the
+        coordinator; this property falls back to HA's live value as a defensive
+        guard in case the field is somehow empty.
         """
         return self.data.vessel.current_timezone or self.hass.config.time_zone or "UTC"
+
+    def async_subscribe_ha_timezone(self) -> Callable[[], None]:
+        """Subscribe to HA timezone changes. Returns an unsubscribe callable.
+
+        Register the returned callable with ``entry.async_on_unload`` so the
+        subscription is cleaned up when the entry is unloaded.
+        """
+
+        @callback
+        def _on_ha_config_update(event: Event) -> None:  # noqa: ARG001
+            new_tz = self.hass.config.time_zone or "UTC"
+            if new_tz != self.data.vessel.current_timezone:
+                self.hass.async_create_task(self._async_sync_ha_timezone(new_tz))
+
+        return self.hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, _on_ha_config_update)
+
+    async def _async_sync_ha_timezone(self, new_tz: str) -> None:
+        """Persist a timezone change that originated from HA's configuration."""
+        _LOGGER.debug(
+            "Syncing vessel timezone to HA timezone: %s → %s",
+            self.data.vessel.current_timezone,
+            new_tz,
+        )
+        await self.async_execute(vessel_ops.sync_ha_timezone, new_tz=new_tz)
 
     @callback
     def async_add_listener(

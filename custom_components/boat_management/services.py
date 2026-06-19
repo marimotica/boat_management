@@ -56,7 +56,6 @@ from .const import (
     SERVICE_MOVE_INVENTORY,
     SERVICE_REOPEN_WORK_ITEM,
     SERVICE_RETIRE_EQUIPMENT,
-    SERVICE_SET_VESSEL_TIMEZONE,
     SERVICE_START_WORK_ITEM,
     SERVICE_SUBMIT_FOR_REVIEW,
     SERVICE_UPDATE_CATALOGUE_TASK,
@@ -159,18 +158,6 @@ def _build_registry() -> dict[str, tuple[vol.Schema, HandlerType, SupportsRespon
         _make_simple(
             vessel_ops.update_vessel,
             arg_map=lambda d: {"changes": d["changes"]},
-        ),
-    )
-    _register(
-        reg,
-        SERVICE_SET_VESSEL_TIMEZONE,
-        _base({vol.Required("timezone"): cv.string, vol.Optional("source"): cv.string}),
-        _make_simple(
-            vessel_ops.set_vessel_timezone,
-            arg_map=lambda d: {
-                "timezone_name": d["timezone"],
-                **({"source": d["source"]} if "source" in d else {}),
-            },
         ),
     )
 

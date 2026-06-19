@@ -7,8 +7,6 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.boat_management.const import (
-    CONF_CURRENT_TIMEZONE,
-    CONF_DEFAULT_TIMEZONE,
     CONF_VESSEL_NAME,
     DOMAIN,
 )
@@ -18,11 +16,7 @@ def _entry() -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Test Vessel",
-        data={
-            CONF_VESSEL_NAME: "Test Vessel",
-            CONF_DEFAULT_TIMEZONE: "Europe/Paris",
-            CONF_CURRENT_TIMEZONE: "Europe/Paris",
-        },
+        data={CONF_VESSEL_NAME: "Test Vessel"},
     )
 
 

@@ -17,7 +17,6 @@ from typing import Any
 import uuid
 
 from .const import (
-    TimezoneSource,
     TriggerSource,
     WorkItemStatus,
 )
@@ -56,14 +55,16 @@ def _opt_dt_iso(value: datetime | None) -> str | None:
 # ---------------------------------------------------------------------------
 @dataclass(slots=True)
 class Vessel:
-    """Root object. Identity is stable; name is display-only."""
+    """Root object. Identity is stable; name is display-only.
+
+    ``current_timezone`` mirrors Home Assistant's configured timezone and is
+    kept in sync automatically. All timestamps are stored as UTC; this field
+    is the local rendering hint for new events only.
+    """
 
     id: str
     name: str
-    default_timezone: str
     current_timezone: str
-    timezone_source: str = TimezoneSource.MANUAL.value
-    timezone_updated_at_utc: datetime | None = None
     vessel_type: str | None = None
     callsign: str | None = None
     mmsi: str | None = None
@@ -74,10 +75,7 @@ class Vessel:
         return {
             "id": self.id,
             "name": self.name,
-            "default_timezone": self.default_timezone,
             "current_timezone": self.current_timezone,
-            "timezone_source": self.timezone_source,
-            "timezone_updated_at_utc": _opt_dt_iso(self.timezone_updated_at_utc),
             "vessel_type": self.vessel_type,
             "callsign": self.callsign,
             "mmsi": self.mmsi,
@@ -90,10 +88,7 @@ class Vessel:
         return cls(
             id=data["id"],
             name=data["name"],
-            default_timezone=data["default_timezone"],
-            current_timezone=data["current_timezone"],
-            timezone_source=data.get("timezone_source", TimezoneSource.MANUAL.value),
-            timezone_updated_at_utc=_opt_dt(data.get("timezone_updated_at_utc")),
+            current_timezone=data.get("current_timezone", "UTC"),
             vessel_type=data.get("vessel_type"),
             callsign=data.get("callsign"),
             mmsi=data.get("mmsi"),

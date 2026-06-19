@@ -8,7 +8,6 @@ import pytest
 
 from custom_components.boat_management.const import (
     CrewRole,
-    TimezoneSource,
     WorkItemStatus,
 )
 from custom_components.boat_management.equipment import (
@@ -29,7 +28,6 @@ from custom_components.boat_management.models import CrewMember
 from custom_components.boat_management.task_catalogue import create_catalogue_task
 from custom_components.boat_management.transitions import TransitionError
 from custom_components.boat_management.validators import ValidationError
-from custom_components.boat_management.vessel import set_vessel_timezone
 from custom_components.boat_management.work_items import (
     create_work_item,
     reopen_work_item,
@@ -213,31 +211,3 @@ def test_amend_log_entry_is_append_only() -> None:
     )
     amend_log_entry(data, log_entry_id=entry.id, note="Corrected torque value")
     assert len(data.maintenance_log[entry.id].amendments) == 1
-
-
-# --- Timezone ---------------------------------------------------------------
-def test_set_vessel_timezone_does_not_rewrite_history() -> None:
-    data = make_data(timezone="Europe/Paris")
-    _crew(data)
-    wi = _ready_for_review(data)
-    entry = verify_work_item(
-        data, work_item_id=wi.id, verified_by="crew1", consume_inventory=False
-    )
-    original_local = entry.completed_at_local
-    original_tz = entry.timezone_at_completion
-
-    set_vessel_timezone(
-        data,
-        timezone_name="America/New_York",
-        source=TimezoneSource.GPS_POSITION.value,
-    )
-    assert data.vessel.current_timezone == "America/New_York"
-    # Historical record untouched.
-    assert data.maintenance_log[entry.id].completed_at_local == original_local
-    assert data.maintenance_log[entry.id].timezone_at_completion == original_tz
-
-
-def test_set_invalid_timezone_rejected() -> None:
-    data = make_data()
-    with pytest.raises(ValueError, match="Invalid timezone"):
-        set_vessel_timezone(data, timezone_name="UTC+2")

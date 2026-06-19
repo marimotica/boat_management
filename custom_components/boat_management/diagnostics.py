@@ -54,8 +54,6 @@ def build_diagnostics(coordinator: BoatCoordinator) -> dict[str, Any]:
             "id": vessel.id,
             "name": vessel.name,
             "current_timezone": vessel.current_timezone,
-            "default_timezone": vessel.default_timezone,
-            "timezone_source": vessel.timezone_source,
         },
         "storage_version": STORAGE_VERSION,
         "object_counts": {

@@ -15,7 +15,6 @@ from custom_components.boat_management.const import (
     SERVICE_CREATE_WORK_ITEM,
     SERVICE_EXPORT_DATA,
     SERVICE_LOAD_SEED_CATALOGUE,
-    SERVICE_SET_VESSEL_TIMEZONE,
     SERVICE_START_WORK_ITEM,
     SERVICE_SUBMIT_FOR_REVIEW,
     SERVICE_VERIFY_WORK_ITEM,
@@ -46,17 +45,6 @@ async def test_create_equipment_invalid_system_raises(
             {"name": "Engine", "system_id": "missing"},
             blocking=True,
         )
-
-
-async def test_set_vessel_timezone_service(hass: HomeAssistant, setup_vessel) -> None:
-    _entry, coordinator = setup_vessel
-    await hass.services.async_call(
-        DOMAIN,
-        SERVICE_SET_VESSEL_TIMEZONE,
-        {"timezone": "America/New_York"},
-        blocking=True,
-    )
-    assert coordinator.data.vessel.current_timezone == "America/New_York"
 
 
 async def test_full_lifecycle_via_services(hass: HomeAssistant, setup_vessel) -> None:

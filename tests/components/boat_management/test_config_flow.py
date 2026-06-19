@@ -8,8 +8,6 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.boat_management.const import (
-    CONF_CURRENT_TIMEZONE,
-    CONF_DEFAULT_TIMEZONE,
     CONF_VESSEL_NAME,
     DOMAIN,
 )
@@ -25,38 +23,30 @@ async def test_user_flow_creates_entry(hass: HomeAssistant) -> None:
         result["flow_id"],
         {
             CONF_VESSEL_NAME: "Argo",
-            CONF_DEFAULT_TIMEZONE: "Europe/Paris",
-            CONF_CURRENT_TIMEZONE: "Europe/Paris",
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Argo"
-    assert result["data"][CONF_DEFAULT_TIMEZONE] == "Europe/Paris"
 
 
-async def test_user_flow_rejects_invalid_timezone(hass: HomeAssistant) -> None:
+async def test_user_flow_requires_vessel_name(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_VESSEL_NAME: "Argo",
-            CONF_DEFAULT_TIMEZONE: "UTC+2",
+            CONF_VESSEL_NAME: "",
         },
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"][CONF_DEFAULT_TIMEZONE] == "invalid_timezone"
+    assert result["errors"][CONF_VESSEL_NAME] == "required"
 
 
-async def test_options_flow_updates_timezone(hass: HomeAssistant) -> None:
+async def test_options_flow_saves_settings(hass: HomeAssistant) -> None:
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={
-            CONF_VESSEL_NAME: "Argo",
-            CONF_DEFAULT_TIMEZONE: "Europe/Paris",
-            CONF_CURRENT_TIMEZONE: "Europe/Paris",
-        },
+        data={CONF_VESSEL_NAME: "Argo"},
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -68,9 +58,11 @@ async def test_options_flow_updates_timezone(hass: HomeAssistant) -> None:
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            CONF_DEFAULT_TIMEZONE: "Europe/Paris",
-            CONF_CURRENT_TIMEZONE: "America/New_York",
+            "low_stock_creates_work": False,
+            "consume_inventory_on_verify": True,
+            "trigger_autorun": False,
+            "diagnostics_verbose": False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_CURRENT_TIMEZONE] == "America/New_York"
+    assert entry.options["low_stock_creates_work"] is False
