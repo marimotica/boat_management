@@ -39,10 +39,13 @@ export class BoatInventorySheet extends LitElement {
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       /* A frame beneath a nested create stays mounted (so its form state is
          preserved) but hidden, so only the top sheet dims and takes input. */
@@ -51,8 +54,13 @@ export class BoatInventorySheet extends LitElement {
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 92%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -81,6 +89,7 @@ export class BoatInventorySheet extends LitElement {
       }
       .two > * {
         flex: 1;
+        min-width: 0;
       }
       .stock {
         display: flex;

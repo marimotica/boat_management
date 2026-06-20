@@ -243,15 +243,23 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 90%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -775,10 +783,13 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       /* A frame beneath a nested create stays mounted (so its form state is
          preserved) but hidden, so only the top sheet dims and takes input. */
@@ -787,8 +798,13 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 92%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -817,6 +833,7 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       }
       .two > * {
         flex: 1;
+        min-width: 0;
       }
       .actions {
         display: flex;
@@ -1137,10 +1154,13 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       /* A frame beneath a nested create stays mounted (so its form state is
          preserved) but hidden, so only the top sheet dims and takes input. */
@@ -1149,8 +1169,13 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 92%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -1179,6 +1204,7 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       }
       .two > * {
         flex: 1;
+        min-width: 0;
       }
       .stock {
         display: flex;
@@ -1455,15 +1481,23 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 92%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -1865,15 +1899,23 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
       .scrim {
         position: fixed;
         inset: 0;
+        overflow: hidden;
         background: rgba(0, 0, 0, 0.5);
         display: flex;
         align-items: flex-end;
         z-index: 20;
+        overscroll-behavior: contain;
+        touch-action: none;
       }
       .sheet {
         width: 100%;
+        max-width: 100vw;
         max-height: 92%;
         overflow-y: auto;
+        overflow-x: hidden;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
         background: var(--bm-surface);
         border-radius: 18px 18px 0 0;
         padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
@@ -2110,7 +2152,7 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
             </div>`:c}
       </header>
 
-      <main>
+      <main class=${this._stack.length>0?"locked":""}>
         ${this._error?o`<div class="banner">${this._error}</div>`:c}
         ${this._loading?o`<div class="loading">Loading vessel…</div>`:this._renderSection()}
       </main>
@@ -2327,6 +2369,10 @@ var Ye=Object.defineProperty;var Ze=Object.getOwnPropertyDescriptor;var r=(n,i,e
         flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+      }
+      main.locked {
+        overflow: hidden;
+        touch-action: none;
       }
       nav {
         position: sticky;

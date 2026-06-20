@@ -219,6 +219,10 @@ export class BoatManagementPanel extends LitElement {
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
       }
+      main.locked {
+        overflow: hidden;
+        touch-action: none;
+      }
       nav {
         position: sticky;
         bottom: 0;
@@ -454,7 +458,7 @@ export class BoatManagementPanel extends LitElement {
           : nothing}
       </header>
 
-      <main>
+      <main class=${this._stack.length > 0 ? "locked" : ""}>
         ${this._error ? html`<div class="banner">${this._error}</div>` : nothing}
         ${this._loading
           ? html`<div class="loading">Loading vessel…</div>`

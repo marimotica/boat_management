@@ -25,6 +25,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removed a duplicate `after_dependencies` key in the manifest that silently
   cleared the intended `frontend`/`panel_custom`/`websocket_api` setup ordering.
 
+## [0.5.1] - 2026-06-20
+
+### Fixed
+
+- Mobile bottom-sheet dialogs now trap touch/overscroll correctly, preventing
+  sideways drag drift and background list scrolling while a dialog is open.
+- Nested create flows (inventory -> equipment -> system) now keep interaction
+  reliably on the top sheet with improved scroll containment behavior.
+
 ## [Unreleased]
 
 ### Added
